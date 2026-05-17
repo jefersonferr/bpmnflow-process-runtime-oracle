@@ -76,7 +76,7 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
 
             when(instanceRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(inst));
 
-            List<WorkflowSummaryResponse> result = service.listInstances(null, null);
+            List<WorkflowSummaryResponse> result = service.listInstances(null, null, 0, 50);
 
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().getInstanceId()).isEqualTo(INSTANCE_ID);
@@ -91,7 +91,7 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
 
             when(instanceRepo.findByStatusOrderByCreatedAtDesc(InstanceStatus.ACTIVE)).thenReturn(List.of(inst));
 
-            List<WorkflowSummaryResponse> result = service.listInstances("active", null);
+            List<WorkflowSummaryResponse> result = service.listInstances("active", null, 0, 50);
 
             assertThat(result).hasSize(1);
             verify(instanceRepo).findByStatusOrderByCreatedAtDesc(InstanceStatus.ACTIVE);
@@ -106,7 +106,7 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
             when(instanceRepo.findByProcessKeyOrderByCreatedAtDesc("PIZZA_DELIVERY"))
                     .thenReturn(List.of(inst));
 
-            List<WorkflowSummaryResponse> result = service.listInstances(null, "PIZZA_DELIVERY");
+            List<WorkflowSummaryResponse> result = service.listInstances(null, "PIZZA_DELIVERY", 0, 50);
 
             assertThat(result).hasSize(1);
             verify(instanceRepo).findByProcessKeyOrderByCreatedAtDesc("PIZZA_DELIVERY");
@@ -121,7 +121,7 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
             when(instanceRepo.findByProcessKeyAndStatusOrderByCreatedAtDesc("PIZZA_DELIVERY", InstanceStatus.COMPLETED))
                     .thenReturn(List.of(inst));
 
-            List<WorkflowSummaryResponse> result = service.listInstances("completed", "PIZZA_DELIVERY");
+            List<WorkflowSummaryResponse> result = service.listInstances("completed", "PIZZA_DELIVERY", 0, 50);
 
             assertThat(result).hasSize(1);
             verify(instanceRepo).findByProcessKeyAndStatusOrderByCreatedAtDesc("PIZZA_DELIVERY", InstanceStatus.COMPLETED);
@@ -132,7 +132,7 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
         void returnsEmptyList() {
             when(instanceRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of());
 
-            assertThat(service.listInstances(null, null)).isEmpty();
+            assertThat(service.listInstances(null, null, 0, 50)).isEmpty();
         }
 
         @Test
@@ -143,7 +143,7 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
 
             when(instanceRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(inst));
 
-            List<WorkflowSummaryResponse> result = service.listInstances(null, null);
+            List<WorkflowSummaryResponse> result = service.listInstances(null, null, 0, 50);
 
             assertThat(result.getFirst().getCurrentActivityAbbreviation()).isNull();
             assertThat(result.getFirst().getInstanceStatus()).isEqualTo("COMPLETED");

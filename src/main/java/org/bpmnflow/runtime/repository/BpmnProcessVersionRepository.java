@@ -14,4 +14,6 @@ public interface BpmnProcessVersionRepository extends JpaRepository<BpmnProcessV
     Optional<BpmnProcessVersionEntity> findByProcess_ProcessIdAndStatus(Long processId, String status);
 
     List<BpmnProcessVersionEntity> findByProcess_ProcessIdOrderByVersionNumberDesc(Long processId);
+
+    List<BpmnProcessVersionEntity> findByProcess_ProcessKey(String processKey);
 }

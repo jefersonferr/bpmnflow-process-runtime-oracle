@@ -1,12 +1,10 @@
 server:
-  port: 8080
-
+  port: ${SERVER_PORT:8080}
 spring:
   application:
     name: bpmnflow-process-runtime
   profiles:
     active: h2
-
   # ----- JPA / Hibernate -----
   jpa:
     open-in-view: false
@@ -17,24 +15,22 @@ spring:
       hibernate:
         format_sql: true
         default_batch_fetch_size: 16
-
   # ----- Liquibase -----
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
     enabled: true
-
   # ----- Jackson -----
   jackson:
     default-property-inclusion: non_null
     serialization:
       indent-output: true
-
 # ----- BPMNFlow Starter -----
 bpmnflow:
   model-path: classpath:pizza-delivery.bpmn
   config-path: classpath:bpmn-config.yaml
   expose-api: true
-
+  duality:
+    enabled: false   # true → ProcessController uses ProcessInstanceDualityService
 # ----- Swagger -----
 springdoc:
   api-docs:
@@ -44,10 +40,9 @@ springdoc:
     tags-sorter: alpha
     operations-sorter: method
   paths-to-exclude: /process/model
-
 ---
 # =============================================================================
-# H2 profile — run locally without relational database
+# H2 profile — run locally without a relational database
 # Usage: -Dspring.profiles.active=h2
 # Data persists in ~/bpmnflow-runtime.mv.db between restarts.
 # Use MODE=Oracle for closest SQL compatibility.
@@ -57,23 +52,73 @@ spring:
   config:
     activate:
       on-profile: h2
-
   datasource:
-    url: jdbc:h2:file:~/bpmnflow-runtime;MODE=Oracle;AUTO_SERVER=TRUE
-    username: sa
-    password:
+    url: ${H2_URL:jdbc:h2:file:~/bpmnflow-runtime;MODE=Oracle;AUTO_SERVER=TRUE}
+    username: ${H2_USERNAME:sa}
+    password: ${H2_PASSWORD:}
     driver-class-name: org.h2.Driver
     hikari:
-      maximum-pool-size: 5
-      minimum-idle: 1
-
+      maximum-pool-size: ${H2_POOL_MAX:5}
+      minimum-idle: ${H2_POOL_MIN:1}
   jpa:
     hibernate:
       ddl-auto: none
     open-in-view: false
     show-sql: false
-
   h2:
     console:
-      enabled: true
+      enabled: ${H2_CONSOLE_ENABLED:true}
       path: /h2-console
+---
+# =============================================================================
+# Oracle profile — Oracle Autonomous Database (OCI) with Wallet mTLS
+# Usage: -Dspring.profiles.active=oracle
+#
+# Prerequisites:
+#   1. Download the wallet from the OCI console (Instance Wallet) and extract
+#      it to /opt/oracle/wallet (or another path — update ORACLE_WALLET_LOCATION)
+#   2. Set the environment variables DB_USER and DB_PASSWORD
+#   3. Confirm the correct TNS name in tnsnames.ora inside the wallet
+#      (usually <db_name>_high, <db_name>_medium, <db_name>_low)
+#
+# The oracle-spring-boot-starter-wallet configures mTLS automatically from
+# spring.datasource.wallet.* — no need to set javax.net.ssl.* manually.
+#
+# The connection pool used is Oracle UCP (Universal Connection Pool),
+# which initialises the SODA context during application startup via
+# initial-pool-size, eliminating initialisation overhead on the first request.
+# =============================================================================
+spring:
+  config:
+    activate:
+      on-profile: oracle
+  datasource:
+    url: ${ORACLE_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    type: oracle.ucp.jdbc.PoolDataSource
+    oracleucp:
+      connection-factory-class-name: oracle.jdbc.pool.OracleDataSource
+      initial-pool-size: ${ORACLE_POOL_INITIAL:5}   # connections created and warmed up at startup
+      min-pool-size: ${ORACLE_POOL_MIN:2}
+      max-pool-size: ${ORACLE_POOL_MAX:10}
+      connection-wait-duration-in-millis: ${ORACLE_POOL_WAIT_MS:30000}
+      inactive-connection-timeout: ${ORACLE_POOL_INACTIVE_TIMEOUT:600}
+      max-connection-reuse-time: ${ORACLE_POOL_REUSE_TIME:1800}
+    wallet:
+      location: ${ORACLE_WALLET_LOCATION:/opt/oracle/wallet}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.OracleDialect
+  liquibase:
+    # V006__duality_views.sql contains Oracle 23ai syntax — do not run on H2
+    contexts: oracle
+bpmnflow:
+  duality:
+    enabled: ${BPMNFLOW_DUALITY_ENABLED:false}   # enables ProcessInstanceDualityService on Oracle profile

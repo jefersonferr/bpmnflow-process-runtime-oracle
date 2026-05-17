@@ -15,21 +15,21 @@ import java.util.Objects;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * Testes de integração do fluxo completo do processo pizza-delivery.
+ * Integration tests for the complete pizza-delivery process flow.
  *
- * Sobe o contexto Spring completo com:
- * - H2 em memória (MODE=Oracle)
- * - Liquibase aplicando as migrations reais (V001–V005)
- * - BpmnDeployService parseando o pizza-delivery.bpmn real
- * - ProcessInstanceService executando o fluxo contra o banco
+ * Starts the full Spring context with:
+ * - H2 in-memory (MODE=Oracle)
+ * - Liquibase applying the real migrations (V001–V005)
+ * - BpmnDeployService parsing the real pizza-delivery.bpmn
+ * - ProcessInstanceService executing the flow against the database
  *
- * Cada teste recebe um contexto limpo via @DirtiesContext para garantir
- * isolamento completo entre cenários.
+ * Each test receives a clean context via @DirtiesContext to guarantee
+ * complete isolation between scenarios.
  */
 @SpringBootTest
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
-@DisplayName("Integração — Pizza Delivery Process")
+@DisplayName("Integration — Pizza Delivery Process")
 class PizzaDeliveryIntegrationTest {
 
     @Autowired private BpmnDeployService    deployService;
@@ -68,17 +68,17 @@ class PizzaDeliveryIntegrationTest {
     }
 
     // ===============================================================
-    // Cenário 1 — Fluxo feliz com pagamento
+    // Scenario 1 — Happy path with payment
     // SEL → ORD → RCV(ORDER_CONFIRMED) → BAK(READY_FOR_DELIVERY)
     //   → DLV(COLLECT_PAYMENT) → PMT → RCP → EAT → COMPLETED/CLOSED
     // ===============================================================
 
     @Nested
-    @DisplayName("Cenário 1 — Fluxo feliz com pagamento")
+    @DisplayName("Scenario 1 — Happy path with payment")
     class FluxoFelizComPagamento {
 
         @Test
-        @DisplayName("start → CS-SEL com processStatus NEW")
+        @DisplayName("start → CS-SEL with processStatus NEW")
         void startDeveIniciarEmSelectPizza() {
             ProcessInstanceResponse resp = start();
 
@@ -90,7 +90,7 @@ class PizzaDeliveryIntegrationTest {
         }
 
         @Test
-        @DisplayName("CS-SEL → CS-ORD sem conclusão")
+        @DisplayName("CS-SEL → CS-ORD without conclusion")
         void selParaOrd() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -102,7 +102,7 @@ class PizzaDeliveryIntegrationTest {
         }
 
         @Test
-        @DisplayName("CS-ORD → SC-RCV → RCV(ORDER_CONFIRMED) → CH-BAK com status IN_PREPARATION")
+        @DisplayName("CS-ORD → SC-RCV → RCV(ORDER_CONFIRMED) → CH-BAK with status IN_PREPARATION")
         void rcvOrderConfirmedParaBak() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -120,7 +120,7 @@ class PizzaDeliveryIntegrationTest {
         }
 
         @Test
-        @DisplayName("CH-BAK(READY_FOR_DELIVERY) → DL-DLV com status OUT_FOR_DELIVERY")
+        @DisplayName("CH-BAK(READY_FOR_DELIVERY) → DL-DLV with status OUT_FOR_DELIVERY")
         void bakReadyParaDlv() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -170,16 +170,16 @@ class PizzaDeliveryIntegrationTest {
     }
 
     // ===============================================================
-    // Cenário 2 — Prepaid / ONLY_DELIVERY
-    // DLV(ONLY_DELIVERY) → EAT → COMPLETED, pulando PMT e RCP
+    // Scenario 2 — Prepaid / ONLY_DELIVERY
+    // DLV(ONLY_DELIVERY) → EAT → COMPLETED, skipping PMT and RCP
     // ===============================================================
 
     @Nested
-    @DisplayName("Cenário 2 — Prepaid (ONLY_DELIVERY)")
+    @DisplayName("Scenario 2 — Prepaid (ONLY_DELIVERY)")
     class FluxoPrepaid {
 
         @Test
-        @DisplayName("DL-DLV(ONLY_DELIVERY) → CS-EAT → COMPLETED pulando PMT e RCP")
+        @DisplayName("DL-DLV(ONLY_DELIVERY) → CS-EAT → COMPLETED skipping PMT and RCP")
         void dlvOnlyDeliveryParaEatSemPagamento() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -189,7 +189,7 @@ class PizzaDeliveryIntegrationTest {
             complete(id, "ORDER_CONFIRMED");        // RCV → BAK
             complete(id, "READY_FOR_DELIVERY");     // BAK → DLV
 
-            resp = complete(id, "ONLY_DELIVERY");   // DLV → EAT (pula PMT e RCP)
+            resp = complete(id, "ONLY_DELIVERY");   // DLV → EAT (skips PMT and RCP)
             assertThat(resp.getCurrentActivity().getAbbreviation()).isEqualTo("CS-EAT");
 
             resp = complete(id);                    // EAT → END
@@ -201,7 +201,7 @@ class PizzaDeliveryIntegrationTest {
                     .extracting("abbreviation")
                     .containsExactly("CS-SEL", "CS-ORD", "SC-RCV", "CH-BAK", "DL-DLV", "CS-EAT");
 
-            // PMT e RCP não aparecem no histórico
+            // PMT and RCP do not appear in the history
             assertThat(resp.getActivityHistory())
                     .extracting("abbreviation")
                     .doesNotContain("DL-PMT", "DL-RCP");
@@ -209,16 +209,16 @@ class PizzaDeliveryIntegrationTest {
     }
 
     // ===============================================================
-    // Cenário 3 — Pedido com atenção (loop SC-CLM)
+    // Scenario 3 — Attention order (loop SC-CLM)
     // RCV(NEEDS_ATTENTION) → CLM → loop → CLM(ORDER_CONFIRMED) → BAK
     // ===============================================================
 
     @Nested
-    @DisplayName("Cenário 3 — Pedido com atenção (loop SC-CLM)")
+    @DisplayName("Scenario 3 — Attention order (loop SC-CLM)")
     class PedidoComAtencao {
 
         @Test
-        @DisplayName("SC-RCV(NEEDS_ATTENTION) → SC-CLM com status PENDING")
+        @DisplayName("SC-RCV(NEEDS_ATTENTION) → SC-CLM with status PENDING")
         void rcvNeedsAttentionParaClm() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -236,7 +236,7 @@ class PizzaDeliveryIntegrationTest {
         }
 
         @Test
-        @DisplayName("SC-CLM(NEEDS_ATTENTION) faz loop de volta ao SC-CLM incrementando stepNumber")
+        @DisplayName("SC-CLM(NEEDS_ATTENTION) loops back to SC-CLM incrementing stepNumber")
         void clmNeedsAttentionFazLoop() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -253,7 +253,7 @@ class PizzaDeliveryIntegrationTest {
         }
 
         @Test
-        @DisplayName("SC-CLM(ORDER_CONFIRMED) → CH-BAK saindo do loop com status IN_PREPARATION")
+        @DisplayName("SC-CLM(ORDER_CONFIRMED) → CH-BAK leaving the loop with status IN_PREPARATION")
         void clmConfirmadoSaiDoLoop() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -267,7 +267,7 @@ class PizzaDeliveryIntegrationTest {
 
             assertThat(resp.getCurrentActivity().getAbbreviation()).isEqualTo("CH-BAK");
             assertThat(resp.getProcessStatus()).isEqualTo("IN_PREPARATION");
-            // Histórico deve conter dois SC-CLM
+            // History must contain two SC-CLM entries
             assertThat(resp.getActivityHistory())
                     .extracting("abbreviation")
                     .filteredOn(a -> a.equals("SC-CLM"))
@@ -276,16 +276,16 @@ class PizzaDeliveryIntegrationTest {
     }
 
     // ===============================================================
-    // Cenário 4 — Pizza não pronta (loop CH-BAK)
+    // Scenario 4 — Pizza not ready (loop CH-BAK)
     // BAK(NOT_READY) → BAK → BAK(READY_FOR_DELIVERY) → DLV
     // ===============================================================
 
     @Nested
-    @DisplayName("Cenário 4 — Pizza não pronta (loop CH-BAK)")
+    @DisplayName("Scenario 4 — Pizza not ready (loop CH-BAK)")
     class PizzaNaoPronta {
 
         @Test
-        @DisplayName("CH-BAK(NOT_READY) faz loop incrementando stepNumber e mantém IN_PREPARATION")
+        @DisplayName("CH-BAK(NOT_READY) loops incrementing stepNumber and keeps IN_PREPARATION")
         void bakNotReadyFazLoop() {
             ProcessInstanceResponse resp = start();
             Long id = resp.getInstanceId();
@@ -306,7 +306,7 @@ class PizzaDeliveryIntegrationTest {
             assertThat(resp.getCurrentActivity().getAbbreviation()).isEqualTo("DL-DLV");
             assertThat(resp.getProcessStatus()).isEqualTo("OUT_FOR_DELIVERY");
 
-            // Histórico deve conter três CH-BAK
+            // History must contain three CH-BAK entries
             assertThat(resp.getActivityHistory())
                     .extracting("abbreviation")
                     .filteredOn(a -> a.equals("CH-BAK"))

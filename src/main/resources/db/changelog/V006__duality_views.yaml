@@ -1,0 +1,177 @@
+databaseChangeLog:
+
+  # ===========================================================================
+  # Duality Views — Oracle 23ai only
+  # Each CREATE is a separate changeset with splitStatements: false
+  # to prevent Liquibase from parsing the DDL body as multiple statements.
+  # These views are NOT managed by JPA — created here once at deploy time.
+  # ===========================================================================
+
+  - changeSet:
+      id: 018-create-wf-process-instance-dv
+      author: jefersonferr
+      dbms: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: |
+              CREATE OR REPLACE JSON RELATIONAL DUALITY VIEW wf_process_instance_dv AS
+              SELECT JSON {
+                  '_id'          : i.instance_id,
+                  'externalId'   : i.external_id,
+                  'status'       : i.status,
+                  'processStatus': i.process_status,
+                  'versionId'    : i.version_id,
+                  'createdAt'    : i.created_at,
+                  'updatedAt'    : i.updated_at,
+                  'completedAt'  : i.completed_at,
+                  'activities'   : [
+                      SELECT JSON {
+                          'id'            : a.inst_activity_id,
+                          'activityId'    : a.activity_id,
+                          'stepNumber'    : a.step_number,
+                          'status'        : a.status,
+                          'conclusionCode': a.conclusion_code,
+                          'startedAt'     : a.started_at,
+                          'completedAt'   : a.completed_at
+                      }
+                      FROM wf_instance_activity a WITH INSERT UPDATE DELETE
+                      WHERE a.instance_id = i.instance_id
+                  ],
+                  'variables'    : [
+                      SELECT JSON {
+                          'id'           : v.variable_id,
+                          'variableKey'  : v.variable_key,
+                          'variableType' : v.variable_type,
+                          'variableValue': v.variable_value,
+                          'updatedAt'    : v.updated_at
+                      }
+                      FROM wf_instance_variable v WITH INSERT UPDATE DELETE
+                      WHERE v.instance_id = i.instance_id
+                  ]
+              }
+              FROM wf_process_instance i WITH INSERT UPDATE DELETE
+
+  - changeSet:
+      id: 019-create-wf-instance-summary-dv
+      author: jefersonferr
+      dbms: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: |
+              CREATE OR REPLACE JSON RELATIONAL DUALITY VIEW wf_instance_summary_dv AS
+              SELECT JSON {
+                  '_id'          : i.instance_id,
+                  'externalId'   : i.external_id,
+                  'status'       : i.status,
+                  'processStatus': i.process_status,
+                  'versionId'    : i.version_id,
+                  'createdAt'    : i.created_at,
+                  'updatedAt'    : i.updated_at,
+                  'completedAt'  : i.completed_at,
+                  'activities'   : [
+                      SELECT JSON {
+                          'id'        : a.inst_activity_id,
+                          'activityId': a.activity_id,
+                          'stepNumber': a.step_number,
+                          'status'    : a.status
+                      }
+                      FROM wf_instance_activity a
+                      WHERE a.instance_id = i.instance_id
+                  ]
+              }
+              FROM wf_process_instance i
+
+  - changeSet:
+      id: 020-create-bpmn-process-version-dv
+      author: jefersonferr
+      dbms: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: |
+              CREATE OR REPLACE JSON RELATIONAL DUALITY VIEW bpmn_process_version_dv AS
+              SELECT JSON {
+                  '_id'           : v.version_id,
+                  'processId'     : v.process_id,
+                  'versionNumber' : v.version_number,
+                  'versionTag'    : v.version_tag,
+                  'status'        : v.status,
+                  'processType'   : v.process_type,
+                  'processSubtype': v.process_subtype,
+                  'isValid'       : v.is_valid,
+                  'parsedAt'      : v.parsed_at,
+                  'createdAt'     : v.created_at,
+                  'participants'  : [
+                      SELECT JSON {
+                          'id'        : p.participant_id,
+                          'bpmnId'    : p.bpmn_id,
+                          'name'      : p.name,
+                          'processRef': p.process_ref
+                      }
+                      FROM bpmn_participant p
+                      WHERE p.version_id = v.version_id
+                  ],
+                  'elements'      : [
+                      SELECT JSON {
+                          'id'         : e.element_id,
+                          'bpmnId'     : e.bpmn_id,
+                          'elementType': e.element_type,
+                          'name'       : e.name
+                      }
+                      FROM bpmn_element e
+                      WHERE e.version_id = v.version_id
+                  ],
+                  'sequenceFlows' : [
+                      SELECT JSON {
+                          'id'                 : sf.flow_id,
+                          'bpmnId'             : sf.bpmn_id,
+                          'sourceElementId'    : sf.source_element_id,
+                          'targetElementId'    : sf.target_element_id,
+                          'conditionExpression': sf.condition_expression
+                      }
+                      FROM bpmn_sequence_flow sf
+                      WHERE sf.version_id = v.version_id
+                  ],
+                  'activities'    : [
+                      SELECT JSON {
+                          'id'          : a.activity_id,
+                          'abbreviation': a.abbreviation,
+                          'name'        : a.name,
+                          'stageCode'   : a.stage_code,
+                          'laneName'    : a.lane_name,
+                          'displayOrder': a.display_order
+                      }
+                      FROM process_activity a
+                      WHERE a.version_id = v.version_id
+                  ],
+                  'rules'         : [
+                      SELECT JSON {
+                          'id'                : r.rule_id,
+                          'ruleType'          : r.rule_type,
+                          'sourceAbbreviation': r.source_abbreviation,
+                          'targetAbbreviation': r.target_abbreviation,
+                          'conclusionCode'    : r.conclusion_code,
+                          'processStatus'     : r.process_status
+                      }
+                      FROM process_rule r
+                      WHERE r.version_id = v.version_id
+                  ]
+              }
+              FROM bpmn_process_version v
+
+  - changeSet:
+      id: 021-create-duality-view-indexes
+      author: jefersonferr
+      dbms: oracle
+      changes:
+        - sql:
+            splitStatements: true
+            sql: |
+              CREATE INDEX IF NOT EXISTS idx_wf_inst_status ON wf_process_instance(status);
+              CREATE INDEX IF NOT EXISTS idx_wf_inst_version_status ON wf_process_instance(version_id, status);
+              CREATE INDEX IF NOT EXISTS idx_wf_var_inst_key ON wf_instance_variable(instance_id, variable_key);

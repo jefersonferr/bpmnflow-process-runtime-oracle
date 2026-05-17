@@ -56,10 +56,16 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- Spring Data JPA -->
+        <!-- Spring Data JPA — HikariCP excluded; Oracle UCP is used instead -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.zaxxer</groupId>
+                    <artifactId>HikariCP</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Liquibase -->
@@ -73,7 +79,13 @@
             <groupId>com.oracle.database.jdbc</groupId>
             <artifactId>ojdbc11</artifactId>
             <version>23.6.0.24.10</version>
-            <scope>runtime</scope>
+        </dependency>
+        <!-- Force UCP version to match ojdbc11 (23.6) — the starter pulls 23.7
+             which has a proxy generation incompatibility with Java 21 -->
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ucp</artifactId>
+            <version>23.6.0.24.10</version>
         </dependency>
         <dependency>
             <groupId>com.oracle.database.security</groupId>
@@ -86,6 +98,27 @@
             <artifactId>orai18n</artifactId>
             <version>23.6.0.24.10</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Oracle Autonomous Database Wallet (mTLS / TNS_ADMIN) -->
+        <dependency>
+            <groupId>com.oracle.database.spring</groupId>
+            <artifactId>oracle-spring-boot-starter-wallet</artifactId>
+            <version>26.1.1</version>
+        </dependency>
+
+        <!-- Oracle UCP — replaces HikariCP for the oracle profile -->
+        <dependency>
+            <groupId>com.oracle.database.spring</groupId>
+            <artifactId>oracle-spring-boot-starter-ucp</artifactId>
+            <version>26.1.1</version>
+        </dependency>
+
+        <!-- Oracle JSON Collections — JdbcTemplate + JSONB + JSONBRowMapper for Duality Views -->
+        <dependency>
+            <groupId>com.oracle.database.spring</groupId>
+            <artifactId>oracle-spring-boot-starter-json-collections</artifactId>
+            <version>26.1.1</version>
         </dependency>
 
         <!-- Swagger UI -->
@@ -218,6 +251,15 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.liquibase</groupId>
+                <artifactId>liquibase-maven-plugin</artifactId>
+                <version>4.31.1</version>
+                <configuration>
+                    <changeLogFile>src/main/resources/db/changelog/db.changelog-master.yaml</changeLogFile>
+                </configuration>
             </plugin>
 
         </plugins>

@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 
 @Slf4j
@@ -54,6 +55,24 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, "Conflict", ex.getMessage(), request);
     }
 
+    // 409 — JPA optimistic lock: another transaction modified the instance concurrently.
+    // The client must re-fetch (GET) to obtain the current state and retry.
+    // This is the JPA equivalent of the Duality View ETag HTTP 412 — same problem,
+    // different detection layer and HTTP status code.
+    @ExceptionHandler({
+            jakarta.persistence.OptimisticLockException.class,
+            org.springframework.orm.ObjectOptimisticLockingFailureException.class
+    })
+    public ResponseEntity<ErrorResponse> handleOptimisticLock(
+            Exception ex, HttpServletRequest request) {
+
+        log.warn("Optimistic lock conflict at {}: {}", request.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.CONFLICT, "Conflict",
+                "Concurrent modification detected: another session updated this instance. " +
+                        "Re-fetch the current state (GET) and retry.",
+                request);
+    }
+
     // 413 — BPMN file exceeds the configured maximum upload size
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ErrorResponse> handleUploadSize(
@@ -62,6 +81,48 @@ public class GlobalExceptionHandler {
         log.debug("Payload too large at {}: {}", request.getRequestURI(), ex.getMessage());
         return build(HttpStatus.PAYLOAD_TOO_LARGE, "Payload Too Large",
                 "BPMN file exceeds the maximum allowed size", request);
+    }
+
+    // 412 — ETag mismatch: Duality View rejected the write (ORA-40896)
+    // The document was modified by another session between the client's GET and this PUT.
+    // Client must re-fetch (GET), obtain the fresh ETag, and retry.
+    @ExceptionHandler(ETagConflictException.class)
+    public ResponseEntity<ErrorResponse> handleETagConflict(
+            ETagConflictException ex, HttpServletRequest request) {
+
+        log.warn("ETag conflict at {}: {}", request.getRequestURI(), ex.getMessage());
+        return build(HttpStatus.PRECONDITION_FAILED, "Precondition Failed", ex.getMessage(), request);
+    }
+
+    // 412 — raw ORA-40896 / ORA-42699 bubbled up without wrapping
+    // Belt-and-suspenders: catches the Oracle exception if it escapes the repository layer.
+    // Handles both DataIntegrityViolationException and UncategorizedSQLException —
+    // the PersistenceExceptionTranslationInterceptor on @Repository beans can
+    // rethrow ORA-42699 as UncategorizedSQLException before the repository's own
+    // try/catch gets a chance to wrap it as ETagConflictException.
+    @ExceptionHandler({
+            org.springframework.dao.DataIntegrityViolationException.class,
+            org.springframework.jdbc.UncategorizedSQLException.class,
+    })
+    public ResponseEntity<ErrorResponse> handleOracleETagError(
+            org.springframework.dao.DataAccessException ex, HttpServletRequest request) {
+
+        Throwable root = ex.getMostSpecificCause();
+        if (root instanceof SQLException sqle) {
+            int code = sqle.getErrorCode();
+            // ORA-40896 (26ai) and ORA-42699 (23c) — ETag mismatch on Duality View update
+            if (code == 40896 || code == 42699) {
+                log.warn("ORA-{} (ETag mismatch) at {}", code, request.getRequestURI());
+                return build(HttpStatus.PRECONDITION_FAILED, "Precondition Failed",
+                        "ETag mismatch: the document was modified by another session " +
+                                "between your GET and this PUT. Re-fetch (GET) to obtain the " +
+                                "current ETag and retry.",
+                        request);
+            }
+        }
+        log.error("Data access exception at {}", request.getRequestURI(), ex);
+        return build(HttpStatus.CONFLICT, "Conflict",
+                ex.getMostSpecificCause().getMessage(), request);
     }
 
     // 500 — any unhandled exception; internal details are not exposed to the client

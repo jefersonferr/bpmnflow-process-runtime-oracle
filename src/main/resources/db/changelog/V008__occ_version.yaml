@@ -1,0 +1,46 @@
+databaseChangeLog:
+
+  # ============================================================================
+  # V008 — JPA Optimistic Locking: occ_version column on wf_process_instance
+  #
+  # Adds the @Version column used by Hibernate for optimistic concurrency control
+  # in the JPA path (dualityEnabled=false).
+  #
+  # Column name: occ_version (not "version" — reserved word in some SQL dialects)
+  # Type: BIGINT, default 0, not null
+  #
+  # Hibernate increments this on every UPDATE. If two concurrent transactions
+  # read the same instance (version=N) and both try to save, the second UPDATE
+  # will match 0 rows (version is already N+1) and Hibernate throws
+  # OptimisticLockException → GlobalExceptionHandler → HTTP 409.
+  #
+  # Existing rows receive occ_version = 0 via the defaultValueNumeric below.
+  # This is safe: all existing instances start at version 0 and will be
+  # incremented normally on the next save.
+  # ============================================================================
+
+  - changeSet:
+      id: 023-add-occ-version-to-wf-process-instance
+      author: jefersonferr
+      comment: >
+        Adds occ_version for JPA @Version optimistic locking on wf_process_instance.
+        Mirrors the ETag mechanism of the Duality View path at the JPA layer.
+      changes:
+        - addColumn:
+            tableName: wf_process_instance
+            columns:
+              - column:
+                  name: occ_version
+                  type: BIGINT
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+                  remarks: >
+                    JPA @Version column for optimistic locking. Incremented by
+                    Hibernate on every UPDATE. Conflict detection: if two sessions
+                    read version=N and both try to commit, the second sees 0 rows
+                    updated and raises OptimisticLockException (HTTP 409).
+      rollback:
+        - dropColumn:
+            tableName: wf_process_instance
+            columnName: occ_version

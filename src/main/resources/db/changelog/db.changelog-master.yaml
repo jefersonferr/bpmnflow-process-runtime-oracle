@@ -9,3 +9,9 @@ databaseChangeLog:
       file: db/changelog/V004__derived_data.yaml
   - include:
       file: db/changelog/V005__runtime.yaml
+  - include:
+      file: db/changelog/V006__duality_views.yaml
+  - include:
+      file: db/changelog/V007_listing_duality_view.yaml
+  - include:
+      file: db/changelog/V008__occ_version.yaml

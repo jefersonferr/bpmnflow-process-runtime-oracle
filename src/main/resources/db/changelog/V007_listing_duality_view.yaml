@@ -1,0 +1,46 @@
+databaseChangeLog:
+
+  # ===========================================================================
+  # wf_instance_listing_dv — Duality View for paginated listing
+  #
+  # Embeds processKey, processName and versionNumber directly in the document
+  # via JOIN with bpmn_process_version and bpmn_process at the root level.
+  #
+  # Does not include an activities subcollection — Oracle does not allow an
+  # explicit JOIN inside subcollections (ORA-40935). The active activity is
+  # resolved by the service via a single batch query after reading the documents.
+  #
+  # This view is read-only — writes continue via wf_process_instance_dv.
+  # ===========================================================================
+  - changeSet:
+      id: 022-create-wf-instance-listing-dv
+      author: jefersonferr
+      dbms: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            stripComments: false
+            sql: |
+              CREATE OR REPLACE JSON RELATIONAL DUALITY VIEW wf_instance_listing_dv AS
+                SELECT JSON {
+              '_id'          : i.instance_id,
+              'externalId'   : i.external_id,
+              'status'       : i.status,
+              'processStatus': i.process_status,
+              -- REMOVED: 'versionId': i.version_id (this caused ORA-40609)
+              'version'      : (SELECT JSON {
+                'id'           : v.version_id, -- ID moved here if needed
+                'versionNumber': v.version_number,
+                'process'      : (SELECT JSON {
+                  'processKey' : p.process_key,
+                  'processName': p.name
+                } FROM bpmn_process p
+                  WHERE p.process_id = v.process_id)
+              } FROM bpmn_process_version v
+                WHERE v.version_id = i.version_id),
+              'createdAt'    : i.created_at,
+              'updatedAt'    : i.updated_at,
+              'completedAt'  : i.completed_at
+              }
+                FROM wf_process_instance i;

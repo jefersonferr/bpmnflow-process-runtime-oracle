@@ -1,77 +1,76 @@
-# bpmnflow-process-runtime
+# bpmnflow-process-runtime-oracle
 
-> **Deploy BPMN. Start instances. Advance step by step. Query everything.**
-> The production-ready runtime that turns your `.bpmn` diagrams into a fully persisted, versioned, REST-driven workflow engine.
+A Spring Boot runtime that turns `.bpmn` diagrams into persisted, versioned, REST-driven workflow instances — with Oracle 23ai-specific extensions.
 
 [![Java](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen)](https://spring.io/projects/spring-boot)
+[![Oracle](https://img.shields.io/badge/Oracle-23ai-red)](https://www.oracle.com/database/23ai/)
 [![Liquibase](https://img.shields.io/badge/Liquibase-schema%20migrations-orange)](https://www.liquibase.org/)
 [![H2](https://img.shields.io/badge/H2-tests%20%26%20local-blue)](https://h2database.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## Why this project exists
+## What this project adds
 
-Most BPMN tools give you two extremes: a full-blown BPM platform (Camunda, Flowable) with its own runtime engine, proprietary database schema, job executors, and years of learning curve — or nothing at all, just a parser with no persistence.
+This repository extends [bpmnflow-process-runtime](https://github.com/jefersonferr/bpmnflow-process-runtime) with Oracle 23ai features that do not belong in the base runtime:
 
-`bpmnflow-process-runtime` sits precisely in between.
+- **JSON Relational Duality Views** — a parallel read/write path where Oracle maintains the full instance state as a single JSON document, in sync with the relational tables.
+- **ETag-based OCC (Duality View path)** — every `GET` and `POST /start` response includes an `ETag`. Pass `If-Match` on writes to detect concurrent modifications (HTTP 412 on conflict).
+- **`@Version` OCC (JPA path)** — Hibernate manages an `occ_version` column; concurrent writes produce HTTP 409.
+- **Oracle UCP connection pool** — replaces HikariCP for the Oracle profile; warms up the SODA context at startup via `initial-pool-size`.
+- **Concurrent variable upsert** — `VariableUpsertHelper` runs UPDATE → INSERT → UPDATE on the caller's JDBC connection, avoiding `REQUIRES_NEW` and connection pool contention.
+- **Paginated listing** — `GET /workflow` accepts `page` / `size`; responses include `X-Page`, `X-Page-Size`, and `X-Result-Count`.
 
-It is a **reference runtime implementation** for the [BPMNFlow ecosystem](#ecosystem) — a lightweight alternative that gives you:
-
-- **Full persistence** of the model, all its structural elements, and every execution event
-- **Versioning** — deploy a new `.bpmn` and old running instances keep working on their original version
-- **REST-first** — every operation is a plain HTTP call, with a Swagger UI included
-- **Any relational database** — the schema uses only portable Liquibase primitive types (`BIGINT`, `VARCHAR`, `BOOLEAN`, `DATETIME`, `CLOB`), compatible with Oracle (19c, 21c, 23ai — driver already bundled), PostgreSQL, MySQL, MariaDB, SQL Server, H2, and others. The choice is yours.
-- **A schema you understand** — 5 clear layers, from metamodel to runtime, fully documented and queryable with plain SQL
+The Oracle-only migrations (`V006`, `V007`) are scoped to the `oracle` Liquibase context and never run on H2, so local development and tests need no Oracle instance.
 
 ---
 
 ## Ecosystem
 
-BPMNFlow is a three-layer ecosystem. Each layer has a single responsibility:
-
 | Repository | Role |
 |---|---|
-| [bpmnflow-core](https://github.com/jefersonferr/bpmnflow-core) | Pure BPMN parser — reads `.bpmn` + YAML config, returns a `Workflow` object with activities, rules, stages, and inconsistencies. No state, no database, no Spring. |
-| [bpmnflow-spring-boot-starter](https://github.com/jefersonferr/bpmnflow-spring-boot-starter) | Spring Boot auto-configuration — injects a `WorkflowEngine` bean, exposes `/process/**` for in-memory model navigation, supports hot-swap without restart. |
-| **bpmnflow-process-runtime** | **This project** — full persistence, multi-version deploy, REST-driven instance lifecycle, typed variables, activity history. Works with any relational database via Liquibase. |
-| [bpmnflow-spring-boot-demo](https://github.com/jefersonferr/bpmnflow-spring-boot-demo) | In-memory demo using the starter — no database required, good for exploring the API quickly. |
-
-Use `bpmnflow-process-runtime` when you need a **real, persisted workflow engine** that your team controls end to end.
+| [bpmnflow-core](https://github.com/jefersonferr/bpmnflow-core) | BPMN parser — reads `.bpmn` + YAML config, returns a `Workflow` object. No state, no database, no Spring. |
+| [bpmnflow-spring-boot-starter](https://github.com/jefersonferr/bpmnflow-spring-boot-starter) | Spring Boot auto-configuration — `WorkflowEngine` bean, `/process/**` endpoints, hot-swap support. |
+| [bpmnflow-process-runtime](https://github.com/jefersonferr/bpmnflow-process-runtime) | Base runtime — persistence, versioned deploy, instance lifecycle, typed variables, activity history. Any relational database. |
+| **bpmnflow-process-runtime-oracle** | **This project** — base runtime plus Oracle 23ai Duality Views, ETag OCC, UCP pool, and Wallet support. |
+| [bpmnflow-spring-boot-demo](https://github.com/jefersonferr/bpmnflow-spring-boot-demo) | In-memory demo using the starter — no database required. |
 
 ---
 
-## How it works — the full picture
+## How it works
 
-![Architecture diagram](architecture.svg)
+### Deploy pipeline
 
-### What happens when you deploy a `.bpmn`
+1. `bpmnflow-core` parses the model and extracts stages, activities, conclusions, rules, and inconsistencies.
+2. A DOM parser reads the raw XML and persists participants, lanes, elements, sequence flows, and extension properties.
+3. The YAML config is SHA-256 hashed and stored, so config changes do not force a model redeploy.
+4. A new process version is created; existing instances keep running on their original version.
 
-1. `bpmnflow-core` parses the model — extracts stages, activities, conclusions, rules, and inconsistencies (Layer 4 — derived data).
-2. A DOM parser reads the raw XML — persists participants, lanes, elements, sequence flows, and all Camunda extension properties (Layer 3 — structural data).
-3. The YAML config is hashed and stored — enabling different processes to use different configs and the same process to evolve its config over time (Layer 1).
-4. A new process version is created — old instances keep running on their original version (Layer 2).
-5. The in-memory `WorkflowEngine` is updated atomically via `AtomicReference`.
+### Two runtime paths
 
-### What happens when you run a process instance
+`ProcessController` dispatches every operation based on `bpmnflow.duality.enabled`:
 
-1. `startProcess` finds the `START_TO_TASK` rule for the version and creates the first activity step.
-2. Each `completeActivity` call marks the current step as completed with the given conclusion code, resolves the matching rule, and creates the next step — or marks the instance as `COMPLETED` if the rule leads to an end event.
-3. Every step is persisted in `wf_instance_activity` with timestamps — full audit trail.
-4. Variables are validated by type before persisting — a declared `INTEGER` rejects `"abc"` at the API boundary.
+```
+bpmnflow.duality.enabled=false  (default)
+  └─ ProcessInstanceService        → JPA + @Version → HTTP 409 on conflict
+
+bpmnflow.duality.enabled=true
+  └─ ProcessInstanceDualityService → Duality View + ETag → HTTP 412 on conflict
+```
+
+Both paths use the same REST endpoints and the same relational tables. The only visible difference is the OCC mechanism and the presence of `ETag` / `If-Match` headers.
 
 ---
 
 ## Prerequisites
 
-| Requirement | Minimum |
+| | Minimum |
 |---|---|
 | Java | 21 |
 | Maven | 3.8+ |
-| Database | Any relational database supported by Hibernate and Liquibase |
-
-No external database is required to run tests or explore the project locally — H2 is included and configured out of the box.
+| Oracle (production) | 23ai — Duality Views require 23ai |
+| Oracle (tests) | Not required — H2 covers all tests |
 
 ---
 
@@ -80,333 +79,236 @@ No external database is required to run tests or explore the project locally —
 ### 1. Clone
 
 ```bash
-git clone https://github.com/jefersonferr/bpmnflow-process-runtime.git
-cd bpmnflow-process-runtime
+git clone https://github.com/jefersonferr/bpmnflow-process-runtime-oracle.git
+cd bpmnflow-process-runtime-oracle
 ```
 
-### 2. Run locally with H2 (no external database needed)
+### 2. Run locally with H2
 
 ```bash
 mvn spring-boot:run -Dspring-boot.run.profiles=h2
 ```
 
-H2 data persists between restarts in `~/bpmnflow-runtime.mv.db`. The H2 console is available at `http://localhost:8080/h2-console`.
+H2 data persists in `~/bpmnflow-runtime.mv.db`. Console: `http://localhost:8080/h2-console`.
+Swagger UI: `http://localhost:8080/swagger-ui.html`
 
-Swagger UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
-
-### 3. Connect to your database of choice
-
-Edit `src/main/resources/application.yaml` with your JDBC datasource and the matching Hibernate dialect:
-
-**Oracle (driver already included — no extra dependency needed):**
-```yaml
-spring:
-  datasource:
-    url: jdbc:oracle:thin:@//host:1521/service
-    username: your_user
-    password: your_password
-  jpa:
-    database-platform: org.hibernate.dialect.OracleDialect
-```
-
-The Oracle JDBC driver (`ojdbc11`), PKI support (`oraclepki`), and NLS library (`orai18n`) are already declared in `pom.xml` — no additional dependency required. Compatible with Oracle 19c, 21c, and 23ai.
-
-**PostgreSQL:**
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/bpmnflow
-    username: your_user
-    password: your_password
-  jpa:
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
-```
-
-**MySQL / MariaDB:**
-```yaml
-spring:
-  datasource:
-    url: jdbc:mysql://localhost:3306/bpmnflow
-    username: your_user
-    password: your_password
-  jpa:
-    database-platform: org.hibernate.dialect.MySQLDialect
-```
-
-**SQL Server:**
-```yaml
-spring:
-  datasource:
-    url: jdbc:sqlserver://localhost:1433;databaseName=bpmnflow
-    username: your_user
-    password: your_password
-  jpa:
-    database-platform: org.hibernate.dialect.SQLServerDialect
-```
-
-For databases other than Oracle, add the corresponding JDBC driver to `pom.xml` and run:
+### 3. Connect to Oracle Autonomous Database
 
 ```bash
-mvn spring-boot:run
+export ORACLE_URL="jdbc:oracle:thin:@mydb_low?TNS_ADMIN=/opt/oracle/wallet"
+export DB_USER=bpmnflow
+export DB_PASSWORD=secret
+export ORACLE_WALLET_LOCATION=/opt/oracle/wallet
+
+mvn spring-boot:run -Dspring-boot.run.profiles=oracle
 ```
 
-Liquibase automatically applies all 5 migration scripts on first startup — no manual DDL required, no setup scripts to run. The changelogs use only portable primitive types, so Liquibase translates the correct DDL syntax for your target database automatically.
+`oracle-spring-boot-starter-wallet` picks up `spring.datasource.wallet.location` and configures mTLS automatically. Liquibase applies all migrations on first startup, including the Oracle-only ones.
+
+### 4. Enable the Duality View path
+
+```bash
+export BPMNFLOW_DUALITY_ENABLED=true
+mvn spring-boot:run -Dspring-boot.run.profiles=oracle
+```
+
+Or in `application.yaml`:
+
+```yaml
+bpmnflow:
+  duality:
+    enabled: true
+```
 
 ---
 
 ## API Reference
 
-### Deploy — Model Management
+### Deploy
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/bpmn/deploy` | Upload and deploy a `.bpmn` file (multipart). Accepts an optional config YAML. Each call to the same `processKey` creates a new version. |
-| `GET` | `/bpmn/processes` | List all deployed processes with their versions and structural counters. |
-| `GET` | `/bpmn/processes/{processKey}` | Get a specific process with all versions ordered newest-first. |
-
-**Deploy example:**
+| `POST` | `/bpmn/deploy` | Upload a `.bpmn` file (multipart). Each call to the same `processKey` creates a new version. |
+| `GET` | `/bpmn/processes` | List deployed processes with versions and structural counters. |
+| `GET` | `/bpmn/processes/{processKey}` | Get a process with all versions, newest first. |
 
 ```bash
-# With default config (classpath bpmn-config.yaml)
 curl -X POST http://localhost:8080/bpmn/deploy \
   -F "bpmn=@pizza-delivery.bpmn" \
   -F "processKey=PIZZA_DELIVERY"
-
-# With a custom config file
-curl -X POST http://localhost:8080/bpmn/deploy \
-  -F "bpmn=@my-process.bpmn" \
-  -F "config=@my-config.yaml" \
-  -F "processKey=MY_PROCESS"
 ```
 
-**Deploy response:**
-
-```json
-{
-  "message": "Model deployed successfully",
-  "processKey": "PIZZA_DELIVERY",
-  "versionId": 1,
-  "versionNumber": 1,
-  "versionTag": "1.0.0",
-  "valid": true,
-  "participantCount": 1,
-  "laneCount": 4,
-  "elementCount": 14,
-  "sequenceFlowCount": 18,
-  "stageCount": 4,
-  "activityCount": 9,
-  "ruleCount": 12,
-  "inconsistencyCount": 0,
-  "inconsistencies": []
-}
-```
-
----
-
-### Workflow — Instance Execution
+### Workflow
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/workflow/start?versionId={id}` | Start a new process instance from a deployed version. Accepts an optional external correlation ID and initial variables. |
-| `POST` | `/workflow/{instanceId}/complete` | Complete the current activity with a conclusion code and advance to the next step. |
-| `GET` | `/workflow/{instanceId}` | Full instance state: current activity, available conclusions, activity history, and all variables. |
-| `GET` | `/workflow` | List instances. Filter by `status` (`ACTIVE`, `COMPLETED`) and/or `processKey`. |
-| `PUT` | `/workflow/{instanceId}/variables` | Set or update typed variables. Validates value against the declared type. |
-| `GET` | `/workflow/{instanceId}/variables` | Get all instance variables with their raw and converted values. |
+| `POST` | `/workflow/start?versionId={id}` | Start a process instance. Returns `ETag` when Duality View is enabled. |
+| `POST` | `/workflow/{instanceId}/complete` | Complete the current activity and move to the next step. Accepts `If-Match`. |
+| `GET` | `/workflow/{instanceId}` | Current activity, available conclusions, activity history, variables. Returns `ETag`. |
+| `GET` | `/workflow` | Paginated list; optional `status` and `processKey` filters. |
+| `PUT` | `/workflow/{instanceId}/variables` | Set or update typed variables. Accepts `If-Match`. |
+| `GET` | `/workflow/{instanceId}/variables` | All variables with raw and converted values. |
 
-**Start a process:**
+#### Pagination
 
-```bash
-curl -X POST "http://localhost:8080/workflow/start?versionId=1" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "externalId": "ORDER-001",
-    "variables": [
-      {"key": "customer", "type": "STRING", "value": "John"},
-      {"key": "total",    "type": "FLOAT",  "value": "42.50"}
-    ]
-  }'
+```
+GET /workflow?status=ACTIVE&page=0&size=50
+
+Response headers:
+  X-Page: 0
+  X-Page-Size: 50
+  X-Result-Count: 23
 ```
 
-**Advance with a conclusion:**
-
-```bash
-curl -X POST "http://localhost:8080/workflow/1/complete" \
-  -H "Content-Type: application/json" \
-  -d '{"conclusionCode": "ORDER_CONFIRMED"}'
-```
-
-**Get full instance state:**
-
-```bash
-curl http://localhost:8080/workflow/1
-```
-
-```json
-{
-  "instanceId": 1,
-  "externalId": "ORDER-001",
-  "instanceStatus": "ACTIVE",
-  "processStatus": "IN_PROGRESS",
-  "versionId": 1,
-  "versionNumber": 1,
-  "currentActivity": {
-    "stepNumber": 3,
-    "abbreviation": "KT-BAK",
-    "activityName": "Bake Pizza",
-    "stageCode": "KT",
-    "laneName": "Kitchen",
-    "availableConclusions": [
-      {"code": "READY_FOR_DELIVERY", "name": "Pizza is ready"},
-      {"code": "NOT_READY",          "name": "Needs more time"}
-    ]
-  },
-  "activityHistory": [
-    {"stepNumber": 1, "abbreviation": "CS-SEL", "status": "COMPLETED", "conclusionCode": null},
-    {"stepNumber": 2, "abbreviation": "CS-ORD", "status": "COMPLETED", "conclusionCode": "ORDER_CONFIRMED"},
-    {"stepNumber": 3, "abbreviation": "KT-BAK", "status": "ACTIVE"}
-  ],
-  "variables": [
-    {"key": "customer", "type": "STRING", "value": "John",  "convertedValue": "John"},
-    {"key": "total",    "type": "FLOAT",  "value": "42.50", "convertedValue": 42.5}
-  ]
-}
-```
+`page` is 0-based. `size` defaults to 50, capped at 200.
 
 ---
 
-## Variable Types
+## Optimistic Concurrency Control
 
-Variables are stored as text and validated + converted by declared type at both write and read time.
+### JPA path — `@Version` / HTTP 409
 
-| Type | Java type | Valid values |
-|------|-----------|--------------|
-| `STRING` | `String` | Any value |
-| `INTEGER` | `Long` | Parseable as long integer |
-| `FLOAT` | `Double` | Parseable as double |
-| `BOOLEAN` | `Boolean` | `true`/`false`, `1`/`0`, `yes`/`no` |
-| `DATE` | `LocalDate` | Format `yyyy-MM-dd` |
-| `JSON` | `JsonNode` | Any valid JSON string |
+Hibernate manages an `occ_version` column on `wf_process_instance`. On every UPDATE, it checks that the stored version matches the one read. If two concurrent transactions both read version `N` and try to save, the second finds 0 rows updated and throws `OptimisticLockException`, which the `GlobalExceptionHandler` maps to HTTP 409.
 
-Type mismatches return HTTP 400 immediately — validation happens before any write.
+No client-side header is needed. The client must re-fetch and retry.
+
+### Duality View path — ETag / HTTP 412
+
+Oracle maintains an ETag for every Duality View document. The ETag is returned in `GET` and `POST /start` responses.
+
+```bash
+# 1. Read current state
+GET /workflow/42
+# ETag: "abc123"
+
+# 2. Write with OCC check
+POST /workflow/42/complete
+If-Match: "abc123"
+Content-Type: application/json
+{"conclusionCode": "ORDER_CONFIRMED"}
+
+# If another session modified the instance in between:
+# HTTP 412 Precondition Failed
+```
+
+Omitting `If-Match` does not disable OCC: Oracle still enforces it internally via the `_metadata` round-trip. The difference is that `If-Match` makes the intent explicit and gives the client a clearer contract.
+
+After a successful write, the response includes the new ETag, so the next write can proceed without an extra `GET`.
+
+| | Without `If-Match` | With `If-Match` |
+|---|---|---|
+| No conflict | HTTP 200, new ETag | HTTP 200, new ETag |
+| Concurrent write | HTTP 412 | HTTP 412 |
+
+---
+
+## Oracle JSON Relational Duality Views
+
+### `wf_process_instance_dv` — read/write
+
+Exposes `wf_process_instance`, `wf_instance_activity`, and `wf_instance_variable` as a single JSON document. A single `INSERT` or `UPDATE` on this view is decomposed by Oracle into DML across all three tables within the same transaction.
+
+```json
+{
+  "_id": 42,
+  "externalId": "ORDER-001",
+  "status": "ACTIVE",
+  "processStatus": "IN_PREPARATION",
+  "versionId": 1,
+  "activities": [
+    {"stepNumber": 1, "status": "COMPLETED", "conclusionCode": "ORDER_CONFIRMED"},
+    {"stepNumber": 2, "status": "ACTIVE"}
+  ],
+  "variables": [
+    {"variableKey": "customer", "variableType": "STRING", "variableValue": "John"}
+  ],
+  "_metadata": {"etag": "abc123"}
+}
+```
+
+### `wf_instance_listing_dv` — read-only
+
+Joins `wf_process_instance` with `bpmn_process_version` and `bpmn_process` to include `processKey`, `processName`, and `versionNumber` in the document, avoiding joins at the service layer for the list endpoint.
+
+Activities are not embedded because Oracle does not permit an explicit `JOIN` inside a Duality View subcollection (ORA-40935). The active activity is fetched separately via a single batch query after the listing documents are read.
+
+---
+
+## Concurrent Variable Upsert
+
+The standard JPA pattern (`findById` + `save`) has a race window: two threads can both see that a variable does not exist and both attempt to insert it, hitting the unique constraint. `VariableUpsertHelper` avoids this with an UPDATE-first approach:
+
+```
+1. UPDATE ... WHERE instance_id=? AND variable_key=?
+   → 1 row affected: done
+   → 0 rows affected: row does not exist yet, proceed to INSERT
+
+2. INSERT ...
+   → success: done
+   → ORA-00001 (another session inserted first): catch and proceed to step 3
+
+3. UPDATE ... (row now exists)
+   → done
+```
+
+The `ORA-00001` is caught inside `JdbcTemplate.execute(ConnectionCallback)`, before Spring's `PersistenceExceptionTranslationInterceptor` can wrap it and flag the transaction for rollback. The caller's transaction remains valid.
+
+`REQUIRES_NEW` is not used because it would need a second connection from the pool for every variable write, which causes starvation under concurrent load.
 
 ---
 
 ## Database Schema
 
-Schema is managed entirely by **Liquibase**. All changelogs live in `src/main/resources/db/changelog/` and use only portable primitive types — no vendor-specific DDL anywhere. Liquibase applies them automatically on startup against whichever database you configure.
-
-| File | Layer | Tables |
-|------|-------|--------|
-| `V001__metamodel.yaml` | 1 — Metamodel | `bpmn_config`, `bpmn_config_property` |
-| `V002__process_versioning.yaml` | 2 — Versioning | `bpmn_process`, `bpmn_process_version` |
-| `V003__structural_layer.yaml` | 3 — Structural | `bpmn_participant`, `bpmn_lane`, `bpmn_element`, `bpmn_sequence_flow`, `bpmn_extension_property` |
-| `V004__derived_data.yaml` | 4 — Derived | `process_stage`, `process_activity`, `process_conclusion`, `process_rule`, `process_inconsistency` |
-| `V005__runtime.yaml` | 5 — Runtime | `wf_process_instance`, `wf_instance_activity`, `wf_instance_variable` |
-
-### Why 5 layers?
-
-Each layer answers a different question:
-
-- **Layer 1** — "What were the rules for parsing this model?"
-- **Layer 2** — "What processes exist, and which version was each instance started on?"
-- **Layer 3** — "What does the BPMN diagram actually look like, element by element?"
-- **Layer 4** — "What does the engine derive from the diagram — activities, rules, conclusions?"
-- **Layer 5** — "What is happening right now — where are instances and what have they done?"
-
-This separation means you can run plain `SELECT` queries across any layer independently, join them for reporting, and evolve each layer's schema without touching the others.
+| File | Context | What it creates |
+|------|---------|-----------------|
+| `V001__metamodel.yaml` | all | `bpmn_config`, `bpmn_config_property` |
+| `V002__process_versioning.yaml` | all | `bpmn_process`, `bpmn_process_version` |
+| `V003__structural_layer.yaml` | all | `bpmn_participant`, `bpmn_lane`, `bpmn_element`, `bpmn_sequence_flow`, `bpmn_extension_property` |
+| `V004__derived_data.yaml` | all | `process_stage`, `process_activity`, `process_conclusion`, `process_rule`, `process_inconsistency` |
+| `V005__runtime.yaml` | all | `wf_process_instance`, `wf_instance_activity`, `wf_instance_variable` |
+| `V006__duality_views.yaml` | oracle | `wf_process_instance_dv` |
+| `V007_listing_duality_view.yaml` | oracle | `wf_instance_listing_dv` |
+| `V008__occ_version.yaml` | all | `occ_version BIGINT` on `wf_process_instance` |
 
 ---
 
-## Deployment Versioning
+## Variable Types
 
-Each call to `POST /bpmn/deploy` with the same `processKey` creates a **new version** — it does not replace the old one.
+Variables are stored as text. Type is enforced on write and applied on read.
 
-```
-PIZZA_DELIVERY v1  →  running instances 1, 2, 3  (still executing on v1 rules)
-PIZZA_DELIVERY v2  →  new instances 4, 5, 6      (executing on v2 rules)
-```
+| Type | Converts to | Accepted values |
+|------|-------------|-----------------|
+| `STRING` | `String` | anything |
+| `INTEGER` | `Long` | integer string |
+| `FLOAT` | `Double` | decimal string |
+| `BOOLEAN` | `Boolean` | `true`/`false`, `1`/`0`, `yes`/`no` |
+| `DATE` | `LocalDate` | `yyyy-MM-dd` |
+| `JSON` | `JsonNode` | valid JSON |
 
-Old instances continue executing against the rules and activities of their original version. Only new instances use the latest version. You can deploy process updates with zero disruption to in-flight work.
-
----
-
-## Running Tests
-
-Tests run entirely against H2 in-memory — no external database required.
-
-```bash
-mvn test
-```
-
-**What is tested:**
-
-| Suite | Type | What it covers |
-|-------|------|----------------|
-| `BpmnDeployServiceTest` | Integration (H2 + Liquibase) | Full deploy pipeline, version increments, structural persistence |
-| `PizzaDeliveryIntegrationTest` | Integration (H2 + Liquibase) | 4 real end-to-end flow scenarios against the pizza-delivery model |
-| `WorkflowFlowTest` | Unit (Mockito) | Step advancement, rule resolution, loop detection |
-| `StartProcessTest` | Unit (Mockito) | Instance creation, first activity resolution |
-| `VariableTest` | Unit (Mockito) | Variable persistence, upsert behavior |
-| `InstanceQueryTest` | Unit (Mockito) | List and get operations, filtering |
-| `ConclusionValidationTest` | Unit (Mockito) | Conclusion validation, error messages |
-| `VariableTypeTest` | Unit (pure) | All 6 types: valid values, invalid values, conversion |
-
-**Coverage report:**
-
-```bash
-mvn test site -DgenerateReports=false
-# Report: target/site/jacoco/index.html
-```
-
-JaCoCo enforces **75% line coverage and 75% branch coverage** — the build fails if either threshold is not met.
-
----
-
-## The Pizza Delivery Reference Model
-
-The project ships with `pizza-delivery.bpmn` — a realistic multi-lane BPMN model used throughout the test suite. It is not a toy example. It exercises every feature the engine supports:
-
-![Pizza Delivery Process](src/main/resources/pizza-delivery.png)
-
-```
-Stages:    CS (Customer Service)  KT (Kitchen)  DL (Delivery)  FN (Finish)
-Activities: CS-SEL  CS-ORD  CS-RCV  CS-CLM
-            KT-BAK
-            DL-DLV  DL-PMT  DL-RCP
-            FN-EAT
-
-Conclusions:
-  CS-ORD  →  (none)               — simple sequential step
-  CS-RCV  →  ORDER_CONFIRMED      — confirmed path
-             NEEDS_ATTENTION      — escalation path
-  KT-BAK  →  READY_FOR_DELIVERY   — pizza is done
-             NOT_READY            — loop: back to KT-BAK
-  DL-DLV  →  COLLECT_PAYMENT      — payment on delivery
-             PREPAID              — no payment step needed
-
-Shared gateway: CS-RCV and CS-CLM both feed the same ExclusiveGateway.
-Self-loop:      KT-BAK  →NOT_READY→  KT-BAK
-```
-
-This model validates the full flow — from deploy → start → multi-step advancement → completion — including the loop and split gateway, in the `PizzaDeliveryIntegrationTest` suite.
+Type mismatches return HTTP 400 before any write reaches the database.
 
 ---
 
 ## Profiles
 
-| Profile | Usage | Database |
-|---------|-------|----------|
-| _(default)_ | Production / staging | Any database — configure `spring.datasource` in `application.yaml` |
-| `h2` | Local development | H2 file-based, persists in `~/bpmnflow-runtime.mv.db` |
-| `test` | `mvn test` | H2 in-memory, clean slate per test class |
+| Profile | Database | Notes |
+|---------|----------|-------|
+| _(default)_ | configurable | Set `spring.datasource` manually |
+| `h2` | H2 file | Persists in `~/bpmnflow-runtime.mv.db` |
+| `oracle` | Oracle ADB | UCP + mTLS Wallet; oracle Liquibase context applied |
+| `test` | H2 in-memory | Clean per test class; used by `mvn test` |
 
 ```bash
-# Local development — no external database
+# H2
 mvn spring-boot:run -Dspring-boot.run.profiles=h2
 
-# Production — uses datasource from application.yaml
-mvn spring-boot:run
+# Oracle, JPA path
+ORACLE_URL=... DB_USER=... DB_PASSWORD=... \
+  mvn spring-boot:run -Dspring-boot.run.profiles=oracle
+
+# Oracle, Duality View path
+ORACLE_URL=... DB_USER=... DB_PASSWORD=... BPMNFLOW_DUALITY_ENABLED=true \
+  mvn spring-boot:run -Dspring-boot.run.profiles=oracle
 ```
 
 ---
@@ -414,49 +316,67 @@ mvn spring-boot:run
 ## Configuration Reference
 
 ```yaml
-# src/main/resources/application.yaml
-
-server:
-  port: 8080
-
+# Oracle profile
 spring:
   datasource:
-    url: jdbc:oracle:thin:@//host:1521/service  # Oracle (default — driver bundled)
-    username: your_user
-    password: your_password
-    # For other databases, replace url and dialect below
+    url: ${ORACLE_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    type: oracle.ucp.jdbc.PoolDataSource
+    oracleucp:
+      initial-pool-size: ${ORACLE_POOL_INITIAL:5}
+      min-pool-size:     ${ORACLE_POOL_MIN:2}
+      max-pool-size:     ${ORACLE_POOL_MAX:10}
+      connection-wait-duration-in-millis: ${ORACLE_POOL_WAIT_MS:30000}
+    wallet:
+      location: ${ORACLE_WALLET_LOCATION:/opt/oracle/wallet}
 
-  jpa:
-    database-platform: org.hibernate.dialect.OracleDialect  # match your database
-    open-in-view: false
-    hibernate:
-      ddl-auto: none      # Liquibase owns the schema — Hibernate never touches DDL
-    properties:
-      hibernate:
-        default_batch_fetch_size: 16
-
-  liquibase:
-    change-log: classpath:db/changelog/db.changelog-master.yaml
-    enabled: true
-
-  jackson:
-    default-property-inclusion: non_null
-    serialization:
-      indent-output: true
-
-# BPMNFlow Starter — controls the in-memory engine
 bpmnflow:
-  model-path: classpath:pizza-delivery.bpmn
-  config-path: classpath:bpmn-config.yaml
-  expose-api: true             # exposes /process/** endpoints from the starter
+  duality:
+    enabled: ${BPMNFLOW_DUALITY_ENABLED:false}
+```
 
-# Swagger UI
-springdoc:
-  swagger-ui:
-    path: /swagger-ui.html
-    tags-sorter: alpha
-    operations-sorter: method
-  paths-to-exclude: /process/model
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `ORACLE_URL` | oracle | — | JDBC URL with TNS alias |
+| `DB_USER` | oracle | — | Database user |
+| `DB_PASSWORD` | oracle | — | Database password |
+| `ORACLE_WALLET_LOCATION` | oracle | `/opt/oracle/wallet` | Path to extracted wallet directory |
+| `ORACLE_POOL_INITIAL` | no | `5` | UCP initial connections (warms up SODA) |
+| `ORACLE_POOL_MIN` | no | `2` | UCP minimum idle connections |
+| `ORACLE_POOL_MAX` | no | `10` | UCP maximum pool size |
+| `ORACLE_POOL_WAIT_MS` | no | `30000` | Connection wait timeout in ms |
+| `BPMNFLOW_DUALITY_ENABLED` | no | `false` | Switches to the Duality View path |
+| `SERVER_PORT` | no | `8080` | HTTP port |
+| `H2_URL` | no | `jdbc:h2:file:~/bpmnflow-runtime;MODE=Oracle;AUTO_SERVER=TRUE` | H2 datasource URL |
+
+---
+
+## Running Tests
+
+```bash
+mvn test
+```
+
+No Oracle instance needed — all tests run on H2 in-memory.
+
+| Suite | Type | Covers |
+|-------|------|--------|
+| `BpmnDeployServiceTest` | Integration | Full deploy pipeline, version increments, structural persistence |
+| `PizzaDeliveryIntegrationTest` | Integration | 4 end-to-end flow scenarios on the real pizza-delivery model |
+| `WorkflowFlowTest` | Unit | Step advancement, rule resolution, loop and split gateway |
+| `StartProcessTest` | Unit | Instance creation, first activity resolution, null-activity guard |
+| `VariableTest` | Unit | Variable persistence via `VariableUpsertHelper` |
+| `VariableUpsertHelperTest` | Unit | UPDATE hit, INSERT success, INSERT collision → fallback UPDATE |
+| `InstanceQueryTest` | Unit | Paginated list, status and processKey filters, get by ID |
+| `ConclusionValidationTest` | Unit | Missing code, invalid code, already-completed guard |
+| `VariableTypeTest` | Unit | All 6 types: valid and invalid values, conversion |
+
+JaCoCo enforces 75% branch coverage; the build fails below that threshold.
+
+```bash
+# Coverage report at target/site/jacoco/index.html
+mvn test
 ```
 
 ---
@@ -464,85 +384,91 @@ springdoc:
 ## Project Structure
 
 ```
-bpmnflow-process-runtime/
+bpmnflow-process-runtime-oracle/
 ├── src/
 │   ├── main/
 │   │   ├── java/org/bpmnflow/runtime/
-│   │   │   ├── ProcessRuntimeApplication.java    # Spring Boot entry point
-│   │   │   ├── SwaggerConfig.java                # OpenAPI metadata
+│   │   │   ├── ProcessRuntimeApplication.java
+│   │   │   ├── GlobalExceptionHandler.java
+│   │   │   ├── ETagConflictException.java
+│   │   │   ├── SwaggerConfig.java
 │   │   │   ├── controller/
-│   │   │   │   ├── DeployController.java         # /bpmn/** endpoints
-│   │   │   │   └── ProcessController.java        # /workflow/** endpoints
-│   │   │   ├── dto/                              # Request and response DTOs
-│   │   │   ├── model/entity/                     # JPA entities (all 5 layers)
-│   │   │   ├── repository/                       # Spring Data JPA repositories
+│   │   │   │   ├── DeployController.java
+│   │   │   │   └── ProcessController.java
+│   │   │   ├── dto/
+│   │   │   │   ├── WorkflowSummaryProjection.java
+│   │   │   │   └── WorkflowSummaryResponse.java
+│   │   │   ├── duality/
+│   │   │   │   ├── doc/
+│   │   │   │   │   ├── WfProcessInstanceDoc.java
+│   │   │   │   │   ├── WfActivityDoc.java
+│   │   │   │   │   ├── WfVariableDoc.java
+│   │   │   │   │   └── WfInstanceListingDoc.java
+│   │   │   │   ├── repository/
+│   │   │   │   │   ├── WfProcessInstanceDualityRepository.java
+│   │   │   │   │   └── WfInstanceListingRepository.java
+│   │   │   │   └── service/
+│   │   │   │       └── ProcessInstanceDualityService.java
+│   │   │   ├── model/entity/
+│   │   │   ├── repository/
 │   │   │   └── service/
-│   │   │       ├── BpmnDeployService.java        # Deploy pipeline (dual-parse)
-│   │   │       ├── BpmnCatalogService.java       # Process/version listing
-│   │   │       ├── ProcessInstanceService.java   # Instance lifecycle
-│   │   │       └── DeployResult.java             # Deploy output value object
+│   │   │       ├── BpmnDeployService.java
+│   │   │       ├── BpmnCatalogService.java
+│   │   │       ├── ProcessInstanceService.java
+│   │   │       ├── VariableUpsertHelper.java
+│   │   │       └── deploy/
 │   │   └── resources/
-│   │       ├── application.yaml                  # Main config + h2 profile
-│   │       ├── pizza-delivery.bpmn               # Reference model
-│   │       ├── bpmn-config.yaml                  # Parser/validation config
-│   │       └── db/changelog/                     # Liquibase migrations (V001–V005)
+│   │       ├── application.yaml
+│   │       ├── pizza-delivery.bpmn
+│   │       ├── bpmn-config.yaml
+│   │       └── db/changelog/
+│   │           ├── V001__metamodel.yaml
+│   │           ├── V002__process_versioning.yaml
+│   │           ├── V003__structural_layer.yaml
+│   │           ├── V004__derived_data.yaml
+│   │           ├── V005__runtime.yaml
+│   │           ├── V006__duality_views.yaml
+│   │           ├── V007_listing_duality_view.yaml
+│   │           └── V008__occ_version.yaml
 │   └── test/
-│       ├── java/org/bpmnflow/runtime/service/   # All test suites
-│       └── resources/
-│           └── application-test.yaml            # H2 in-memory test config
+│       ├── java/org/bpmnflow/runtime/service/
+│       └── resources/application-test.yaml
 └── pom.xml
 ```
 
 ---
 
-## How this relates to bpmnflow-core and the starter
-
-`bpmnflow-process-runtime` **uses** both upstream libraries — it does not replace them.
-
-The **starter** (`bpmnflow-spring-boot-starter`) auto-configures an in-memory `WorkflowEngine` bean at startup. The runtime uses this bean for two things: loading the default classpath BPMN at startup, and updating the in-memory engine atomically after each deploy (via `AtomicReference<WorkflowEngine>`).
-
-The **core** (`bpmnflow-core`) does the actual BPMN parsing. The runtime calls `ModelParser.parser()` inside `BpmnDeployService` to extract the derived workflow model, and independently uses a DOM parser to extract the raw structural elements. These are two complementary views of the same file:
-
-| View | How | What it captures |
-|------|-----|-----------------|
-| Semantic (derived) | `bpmnflow-core` / `ModelParser` | Stages, activities, conclusions, rules, inconsistencies |
-| Structural (raw) | DOM / `DocumentBuilderFactory` | Every XML element, attribute, extension property, sequence flow |
-
-Both views are persisted, so you can query the database for business-level data ("what activities exist in version 2?") and BPMN-level data ("what element type is this? what are its extension properties?") independently and together.
-
----
-
 ## FAQ
 
-**Which databases are supported?**
+**Do I need Oracle 23ai to use this project?**
 
-Any relational database supported by Hibernate and Liquibase. The schema uses only portable primitive types (`BIGINT`, `VARCHAR`, `BOOLEAN`, `DATETIME`, `CLOB`) with no vendor-specific syntax — Liquibase translates these to the correct DDL for your target database automatically. Oracle (19c, 21c, 23ai), PostgreSQL, MySQL, MariaDB, and SQL Server are all valid choices. The Oracle JDBC driver is already bundled in `pom.xml` — no extra dependency needed. H2 is included for local development and tests and requires zero configuration.
+No. H2 covers all tests and local development. The Oracle-specific migrations are tagged `dbms: oracle` and Liquibase skips them on H2. The JPA path with `@Version` OCC runs on any Hibernate-supported database.
 
-**Can multiple `.bpmn` processes coexist?**
+**What is the difference between HTTP 409 and HTTP 412?**
 
-Yes. Each `processKey` is independent. You can deploy `PIZZA_DELIVERY`, `ORDER_FULFILLMENT`, and `CUSTOMER_ONBOARDING` to the same runtime and run instances of each simultaneously.
+Both mean a concurrent modification was detected. 409 comes from the JPA path — Hibernate found the `occ_version` mismatch at commit time. 412 comes from the Duality View path — Oracle found the ETag mismatch at the `UPDATE` statement. In both cases the client should re-fetch with `GET` and retry.
 
-**What happens if the BPMN model has inconsistencies?**
+**Can I switch between paths at runtime?**
 
-The deploy still succeeds and the version is created with `valid = false`. The inconsistencies are listed in the deploy response and stored in `process_inconsistency`. You can still start instances from an invalid model — the engine does not block on inconsistencies, giving you visibility without hard failures.
+No. `bpmnflow.duality.enabled` is read at startup. Changing it requires a restart.
 
-**Can I query process state directly from the database?**
+**Why does the listing not include the active activity?**
 
-Yes — that is an explicit design goal. The schema is normalized and readable. A running instance's full history is in `wf_instance_activity` ordered by `step_number`. Variables are in `wf_instance_variable`. No proprietary binary serialization anywhere.
+Oracle does not allow an explicit `JOIN` inside a Duality View subcollection (ORA-40935). The active activity is fetched with `findActiveByInstanceIdIn` after reading the listing documents — one query for all IDs, not one per document.
 
-**How does hot-swap work?**
+**Why UCP instead of HikariCP on Oracle?**
 
-When you deploy a new model via `POST /bpmn/deploy`, `BpmnDeployService` calls `engineRef.set(new WorkflowEngineImpl(workflow))`. Any component holding `AtomicReference<WorkflowEngine>` immediately reflects the new model. Components that injected `WorkflowEngine` directly at startup keep the original — which is the intended behavior for in-flight instances.
+UCP initialises the SODA context when connections are created, so the first request to any SODA-backed endpoint does not pay that cost. HikariCP has no equivalent hook.
 
-**Can I use this without Spring Boot?**
+**Why not just use `findById` + `save` for variables?**
 
-This project requires Spring Boot. For a framework-agnostic BPMN parser with no dependencies, see [bpmnflow-core](https://github.com/jefersonferr/bpmnflow-core) directly.
+Two threads can both find that a variable does not exist and both try to insert it, causing a unique constraint violation. The UPDATE-first strategy in `VariableUpsertHelper` turns the constraint violation into a retry instead of an error, and keeps everything in the caller's transaction without opening a second connection.
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
 ## Author
 
@@ -551,4 +477,4 @@ MIT License — see [LICENSE](LICENSE).
 ---
 
 *Part of the BPMNFlow ecosystem:*
-*[bpmnflow-core](https://github.com/jefersonferr/bpmnflow-core) · [bpmnflow-spring-boot-starter](https://github.com/jefersonferr/bpmnflow-spring-boot-starter) · [bpmnflow-spring-boot-demo](https://github.com/jefersonferr/bpmnflow-spring-boot-demo)*
+*[bpmnflow-core](https://github.com/jefersonferr/bpmnflow-core) · [bpmnflow-spring-boot-starter](https://github.com/jefersonferr/bpmnflow-spring-boot-starter) · [bpmnflow-process-runtime](https://github.com/jefersonferr/bpmnflow-process-runtime) · [bpmnflow-spring-boot-demo](https://github.com/jefersonferr/bpmnflow-spring-boot-demo)*
