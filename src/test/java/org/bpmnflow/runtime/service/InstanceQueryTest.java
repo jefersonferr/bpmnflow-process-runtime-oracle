@@ -8,11 +8,16 @@ import org.bpmnflow.runtime.model.entity.InstanceStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @DisplayName("ProcessInstanceService — instance queries")
@@ -61,92 +66,124 @@ class InstanceQueryTest extends ProcessInstanceServiceTestBase {
     }
 
     // ---------------------------------------------------------------
-    // listInstances
+    // listInstances — uses projection queries with Pageable
     // ---------------------------------------------------------------
 
     @Nested
     @DisplayName("listInstances")
     class ListInstances {
 
+        // Helper: build a WorkflowSummaryProjection anonymous instance
+        private WorkflowSummaryProjection projection(Long instanceId,
+                                                     String instanceStatus,
+                                                     String processStatus,
+                                                     String processKey,
+                                                     String activityAbbreviation) {
+            return new WorkflowSummaryProjection() {
+                public Long getInstanceId()                    { return instanceId; }
+                public String getExternalId()                  { return null; }
+                public String getInstanceStatus()              { return instanceStatus; }
+                public String getProcessStatus()               { return processStatus; }
+                public Long getVersionId()                     { return VERSION_ID; }
+                public Integer getVersionNumber()              { return 1; }
+                public String getProcessKey()                  { return processKey; }
+                public String getProcessName()                 { return "Pizza Delivery"; }
+                public String getCurrentActivityAbbreviation() { return activityAbbreviation; }
+                public String getCurrentActivityName()         { return null; }
+                public LocalDateTime getCreatedAt()            { return LocalDateTime.now(); }
+                public LocalDateTime getUpdatedAt()            { return LocalDateTime.now(); }
+                public LocalDateTime getCompletedAt()          { return null; }
+            };
+        }
+
         @Test
         @DisplayName("returns all instances when no filter is provided")
         void returnsAllWithNoFilter() {
-            WfProcessInstanceEntity inst = instance(INSTANCE_ID, "ACTIVE", "NEW");
-            inst.getInstanceActivities().add(step(inst, actSEL, 1, "ACTIVE"));
+            var proj = projection(INSTANCE_ID, "ACTIVE", "NEW", "PIZZA_DELIVERY", "CS-SEL");
 
-            when(instanceRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(inst));
+            when(instanceRepo.findAllSummary(any(Pageable.class))).thenReturn(List.of(proj));
 
             List<WorkflowSummaryResponse> result = service.listInstances(null, null, 0, 50);
 
             assertThat(result).hasSize(1);
             assertThat(result.getFirst().getInstanceId()).isEqualTo(INSTANCE_ID);
             assertThat(result.getFirst().getCurrentActivityAbbreviation()).isEqualTo("CS-SEL");
+            verify(instanceRepo).findAllSummary(PageRequest.of(0, 50));
         }
 
         @Test
-        @DisplayName("filters by status (uppercases the value)")
+        @DisplayName("filters by status")
         void filtersByStatus() {
-            WfProcessInstanceEntity inst = instance(INSTANCE_ID, "ACTIVE", "NEW");
-            inst.getInstanceActivities().add(step(inst, actSEL, 1, "ACTIVE"));
+            var proj = projection(INSTANCE_ID, "ACTIVE", "NEW", "PIZZA_DELIVERY", "CS-SEL");
 
-            when(instanceRepo.findByStatusOrderByCreatedAtDesc(InstanceStatus.ACTIVE)).thenReturn(List.of(inst));
+            when(instanceRepo.findSummaryByStatus(eq(InstanceStatus.ACTIVE), any(Pageable.class)))
+                    .thenReturn(List.of(proj));
 
             List<WorkflowSummaryResponse> result = service.listInstances("active", null, 0, 50);
 
             assertThat(result).hasSize(1);
-            verify(instanceRepo).findByStatusOrderByCreatedAtDesc(InstanceStatus.ACTIVE);
+            verify(instanceRepo).findSummaryByStatus(InstanceStatus.ACTIVE, PageRequest.of(0, 50));
         }
 
         @Test
         @DisplayName("filters by processKey")
         void filtersByProcessKey() {
-            WfProcessInstanceEntity inst = instance(INSTANCE_ID, "ACTIVE", "NEW");
-            inst.getInstanceActivities().add(step(inst, actSEL, 1, "ACTIVE"));
+            var proj = projection(INSTANCE_ID, "ACTIVE", "NEW", "PIZZA_DELIVERY", "CS-SEL");
 
-            when(instanceRepo.findByProcessKeyOrderByCreatedAtDesc("PIZZA_DELIVERY"))
-                    .thenReturn(List.of(inst));
+            when(instanceRepo.findSummaryByProcessKey(eq("PIZZA_DELIVERY"), any(Pageable.class)))
+                    .thenReturn(List.of(proj));
 
             List<WorkflowSummaryResponse> result = service.listInstances(null, "PIZZA_DELIVERY", 0, 50);
 
             assertThat(result).hasSize(1);
-            verify(instanceRepo).findByProcessKeyOrderByCreatedAtDesc("PIZZA_DELIVERY");
+            verify(instanceRepo).findSummaryByProcessKey("PIZZA_DELIVERY", PageRequest.of(0, 50));
         }
 
         @Test
         @DisplayName("filters by both processKey and status")
         void filtersByProcessKeyAndStatus() {
-            WfProcessInstanceEntity inst = instance(INSTANCE_ID, "COMPLETED", "CLOSED");
-            inst.getInstanceActivities().add(step(inst, actEAT, 8, "COMPLETED"));
+            var proj = projection(INSTANCE_ID, "COMPLETED", "CLOSED", "PIZZA_DELIVERY", null);
 
-            when(instanceRepo.findByProcessKeyAndStatusOrderByCreatedAtDesc("PIZZA_DELIVERY", InstanceStatus.COMPLETED))
-                    .thenReturn(List.of(inst));
+            when(instanceRepo.findSummaryByProcessKeyAndStatus(
+                    eq("PIZZA_DELIVERY"), eq(InstanceStatus.COMPLETED), any(Pageable.class)))
+                    .thenReturn(List.of(proj));
 
             List<WorkflowSummaryResponse> result = service.listInstances("completed", "PIZZA_DELIVERY", 0, 50);
 
             assertThat(result).hasSize(1);
-            verify(instanceRepo).findByProcessKeyAndStatusOrderByCreatedAtDesc("PIZZA_DELIVERY", InstanceStatus.COMPLETED);
+            verify(instanceRepo).findSummaryByProcessKeyAndStatus(
+                    "PIZZA_DELIVERY", InstanceStatus.COMPLETED, PageRequest.of(0, 50));
         }
 
         @Test
         @DisplayName("returns empty list when no instances match")
         void returnsEmptyList() {
-            when(instanceRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of());
+            when(instanceRepo.findAllSummary(any(Pageable.class))).thenReturn(List.of());
 
             assertThat(service.listInstances(null, null, 0, 50)).isEmpty();
         }
 
         @Test
-        @DisplayName("returns null currentActivity in summary for COMPLETED instance")
+        @DisplayName("currentActivityAbbreviation is null for COMPLETED instance")
         void completedInstanceHasNoCurrentActivity() {
-            WfProcessInstanceEntity inst = instance(INSTANCE_ID, "COMPLETED", "CLOSED");
-            inst.getInstanceActivities().add(step(inst, actEAT, 8, "COMPLETED"));
+            var proj = projection(INSTANCE_ID, "COMPLETED", "CLOSED", "PIZZA_DELIVERY", null);
 
-            when(instanceRepo.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(inst));
+            when(instanceRepo.findAllSummary(any(Pageable.class))).thenReturn(List.of(proj));
 
             List<WorkflowSummaryResponse> result = service.listInstances(null, null, 0, 50);
 
             assertThat(result.getFirst().getCurrentActivityAbbreviation()).isNull();
             assertThat(result.getFirst().getInstanceStatus()).isEqualTo("COMPLETED");
+        }
+
+        @Test
+        @DisplayName("respects page and size parameters")
+        void respectsPagination() {
+            when(instanceRepo.findAllSummary(any(Pageable.class))).thenReturn(List.of());
+
+            service.listInstances(null, null, 2, 25);
+
+            verify(instanceRepo).findAllSummary(PageRequest.of(2, 25));
         }
     }
 }

@@ -12,6 +12,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @DisplayName("ProcessInstanceService — startProcess")
@@ -35,16 +36,13 @@ class StartProcessTest extends ProcessInstanceServiceTestBase {
     }
 
     @Test
-    @DisplayName("persists initial variables when provided")
+    @DisplayName("delegates initial variable persistence to VariableUpsertHelper")
     void persistsInitialVariables() {
         when(versionRepo.findById(VERSION_ID)).thenReturn(Optional.of(version));
         when(ruleRepo.findByVersion_VersionIdAndRuleType(VERSION_ID, RuleType.START_TO_TASK))
                 .thenReturn(List.of(rule("START_TO_TASK", null, actSEL, "NEW")));
         when(instanceRepo.save(any())).thenAnswer(inv -> withId(inv.getArgument(0), INSTANCE_ID));
         when(instActivityRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(variableRepo.findByInstance_InstanceIdAndVariableKey(any(), any()))
-                .thenReturn(Optional.empty());
-        when(variableRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(variableRepo.findByInstance_InstanceId(any())).thenReturn(List.of());
 
         StartProcessRequest request = StartProcessRequest.builder()
@@ -58,7 +56,8 @@ class StartProcessTest extends ProcessInstanceServiceTestBase {
         ProcessInstanceResponse resp = service.startProcess(VERSION_ID, request);
 
         assertThat(resp.getExternalId()).isEqualTo("EXT-001");
-        verify(variableRepo, times(2)).save(any());
+        verify(variableUpsertHelper).upsert(eq(INSTANCE_ID), eq("customer"), eq("STRING"), eq("Jeferson"));
+        verify(variableUpsertHelper).upsert(eq(INSTANCE_ID), eq("total"), eq("FLOAT"), eq("49.90"));
     }
 
     @Test
