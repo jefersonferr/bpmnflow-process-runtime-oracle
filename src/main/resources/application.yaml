@@ -39,7 +39,9 @@ springdoc:
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: method
-  paths-to-exclude: /process/model
+  packages-to-scan:
+    - org.bpmnflow.runtime
+    - org.bpmnflow.starter.api
 ---
 # =============================================================================
 # H2 profile — run locally without a relational database
@@ -100,7 +102,7 @@ spring:
     type: oracle.ucp.jdbc.PoolDataSource
     oracleucp:
       connection-factory-class-name: oracle.jdbc.pool.OracleDataSource
-      initial-pool-size: ${ORACLE_POOL_INITIAL:5}   # connections created and warmed up at startup
+      initial-pool-size: ${ORACLE_POOL_INITIAL:5}
       min-pool-size: ${ORACLE_POOL_MIN:2}
       max-pool-size: ${ORACLE_POOL_MAX:10}
       connection-wait-duration-in-millis: ${ORACLE_POOL_WAIT_MS:30000}
@@ -121,4 +123,4 @@ spring:
     contexts: oracle
 bpmnflow:
   duality:
-    enabled: ${BPMNFLOW_DUALITY_ENABLED:false}   # enables ProcessInstanceDualityService on Oracle profile
+    enabled: ${BPMNFLOW_DUALITY_ENABLED:false}
