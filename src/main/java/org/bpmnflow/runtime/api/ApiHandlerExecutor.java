@@ -49,12 +49,12 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ApiHandlerExecutor {
 
-    public static final String OWNER_TYPE_ELEMENT      = "ELEMENT";
-    public static final String PROP_CONNECTOR_ID       = "connectorId";
-    public static final String PROP_ENDPOINT           = "endpoint";
-    public static final String PROP_METHOD             = "method";
-    public static final String PROP_PAYLOAD_TEMPLATE   = "payloadTemplate";
-    public static final String PROP_OUTPUT_MAPPING_PFX = "outputMapping.";
+    public static final String OWNER_TYPE_ELEMENT       = "ELEMENT";
+    public static final String PROP_CONNECTOR_ID        = "connector.id";
+    public static final String PROP_ENDPOINT            = "connector.input.url";
+    public static final String PROP_METHOD              = "connector.input.method";
+    public static final String PROP_PAYLOAD_TEMPLATE    = "connector.input.payload";
+    public static final String PROP_OUTPUT_MAPPING_PFX  = "connector.output.";
 
     private final BpmnExtensionPropertyRepository extPropRepo;
     private final WfInstanceVariableRepository    variableRepo;
@@ -82,6 +82,7 @@ public class ApiHandlerExecutor {
         if (props.isEmpty()) return;
 
         Map<String, String> propMap = toMap(props);
+
         String connectorId = propMap.get(PROP_CONNECTOR_ID);
 
         // Not an API activity — plain task, nothing to do

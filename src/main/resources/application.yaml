@@ -42,6 +42,7 @@ springdoc:
   packages-to-scan:
     - org.bpmnflow.runtime
     - org.bpmnflow.starter.api
+  paths-to-exclude: /process/model
 ---
 # =============================================================================
 # H2 profile — run locally without a relational database

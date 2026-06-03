@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bpmnflow.model.RuleType;
 import org.bpmnflow.runtime.ResourceNotFoundException;
+import org.bpmnflow.runtime.api.ApiHandlerExecutor;
 import org.bpmnflow.runtime.dto.*;
 import org.bpmnflow.runtime.dto.WorkflowSummaryProjection;
 import org.bpmnflow.runtime.dto.WorkflowSummaryResponse;
@@ -28,6 +29,7 @@ public class ProcessInstanceService {
     private final WfInstanceActivityRepository instActivityRepo;
     private final WfInstanceVariableRepository variableRepo;
     private final VariableUpsertHelper variableUpsertHelper;
+    private final ApiHandlerExecutor apiHandlerExecutor;
 
     // ---------------------------------------------------------------
     // Instance operations
@@ -113,6 +115,12 @@ public class ProcessInstanceService {
                                 "'. Available: " + available);
             }
         }
+
+        // ---------------------------------------------------------------
+        // Execute API handler for the CURRENT activity before completing it
+        // (service tasks with connectorId — no-op for plain human tasks)
+        // ---------------------------------------------------------------
+        apiHandlerExecutor.executeIfApiActivity(instanceId, currentActivity);
 
         currentStep.setStatus(ActivityStepStatus.COMPLETED);
         currentStep.setConclusionCode(conclusionCode);
@@ -239,7 +247,7 @@ public class ProcessInstanceService {
         // and verifies occ_version (@Version) on commit.
         // Without a dirty field, Hibernate skips the UPDATE (no-op dirty check)
         // and @Version is never verified — concurrent writes go undetected.
-        instance.setUpdatedAt(java.time.LocalDateTime.now());
+        instance.setUpdatedAt(LocalDateTime.now());
         instanceRepo.save(instance);
         return getVariableList(instanceId);
     }
