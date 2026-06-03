@@ -31,6 +31,8 @@ bpmnflow:
   expose-api: true
   duality:
     enabled: false   # true → ProcessController uses ProcessInstanceDualityService
+  api-handler:
+    provider: plsql
 # ----- Swagger -----
 springdoc:
   api-docs:

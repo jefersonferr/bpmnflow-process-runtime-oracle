@@ -1,0 +1,207 @@
+databaseChangeLog:
+
+  # ===========================================================================
+  # PL/SQL API Handler — Oracle 19c+ only
+  #
+  # Creates the package BPMNFLOW_API_HANDLER that wraps Oracle UTL_HTTP to
+  # execute outbound REST calls on behalf of PlSqlApiHandlerProvider.
+  #
+  # Each CREATE OR REPLACE is a separate changeset with splitStatements: false
+  # to prevent Liquibase from misinterpreting the PL/SQL body as multiple
+  # statements. runOnChange: true allows recompilation on package changes.
+  #
+  # Prerequisites (run once as DBA before starting the application):
+  #
+  #   BEGIN
+  #     DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(
+  #       host           => '*',
+  #       lower_port     => 80,
+  #       upper_port     => 443,
+  #       ace            => xs$ace_type(
+  #         privilege_list => xs$name_list('connect', 'resolve'),
+  #         principal_name => 'BPMNFLOW',
+  #         principal_type => xs_acl.ptype_db));
+  #   END;
+  #
+  # For HTTPS endpoints, configure the Oracle wallet and register it via
+  # UTL_HTTP.SET_WALLET inside the package body or at session level.
+  # ===========================================================================
+
+  - changeSet:
+      id: 024-create-plsql-api-handler-spec
+      author: jefersonferr
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              CREATE OR REPLACE PACKAGE BPMNFLOW_API_HANDLER AS
+
+                PROCEDURE EXECUTE_API(
+                    p_endpoint    IN  VARCHAR2,
+                    p_method      IN  VARCHAR2,
+                    p_payload     IN  CLOB,
+                    p_headers     IN  CLOB,
+                    p_response    OUT CLOB,
+                    p_status_code OUT NUMBER
+                );
+
+              END BPMNFLOW_API_HANDLER;
+
+  - changeSet:
+      id: 024-create-plsql-api-handler-body
+      author: jefersonferr
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              CREATE OR REPLACE PACKAGE BODY BPMNFLOW_API_HANDLER AS
+
+                  C_READ_TIMEOUT_SEC  CONSTANT PLS_INTEGER := 30;
+                  C_BUFFER_SIZE       CONSTANT PLS_INTEGER := 32767;
+                  C_CONTENT_TYPE      CONSTANT VARCHAR2(50) := 'application/json';
+
+                  PROCEDURE apply_headers(
+                      p_req     IN OUT NOCOPY UTL_HTTP.req,
+                      p_headers IN            CLOB
+                  ) IS
+                      v_json  VARCHAR2(32767);
+                      v_name  VARCHAR2(256);
+                      v_value VARCHAR2(4000);
+                      v_pos   PLS_INTEGER := 1;
+                      v_len   PLS_INTEGER;
+                      v_char  CHAR(1);
+
+                      PROCEDURE skip_ws IS
+                      BEGIN
+                          WHILE v_pos <= v_len AND v_char IN (' ', CHR(9), CHR(10), CHR(13)) LOOP
+                              v_pos  := v_pos + 1;
+                              v_char := SUBSTR(v_json, v_pos, 1);
+                          END LOOP;
+                      END skip_ws;
+
+                      FUNCTION read_string RETURN VARCHAR2 IS
+                          v_result VARCHAR2(4000) := '';
+                          v_c CHAR(1);
+                      BEGIN
+                          v_pos := v_pos + 1;
+                          LOOP
+                              EXIT WHEN v_pos > v_len;
+                              v_c := SUBSTR(v_json, v_pos, 1);
+                              IF v_c = '\' THEN
+                                  v_pos    := v_pos + 1;
+                                  v_result := v_result || SUBSTR(v_json, v_pos, 1);
+                              ELSIF v_c = '"' THEN
+                                  v_pos := v_pos + 1;
+                                  EXIT;
+                              ELSE
+                                  v_result := v_result || v_c;
+                              END IF;
+                              v_pos := v_pos + 1;
+                          END LOOP;
+                          RETURN v_result;
+                      END read_string;
+
+                  BEGIN
+                      IF p_headers IS NULL OR DBMS_LOB.GETLENGTH(p_headers) = 0 THEN
+                          RETURN;
+                      END IF;
+                      v_json := DBMS_LOB.SUBSTR(p_headers, 32767, 1);
+                      v_len  := LENGTH(v_json);
+                      v_char := SUBSTR(v_json, 1, 1);
+                      skip_ws;
+                      IF v_char != '{' THEN RETURN; END IF;
+                      v_pos  := v_pos + 1;
+                      v_char := SUBSTR(v_json, v_pos, 1);
+                      LOOP
+                          skip_ws;
+                          EXIT WHEN v_pos > v_len OR v_char = '}';
+                          IF v_char != '"' THEN EXIT; END IF;
+                          v_name := read_string;
+                          v_char := SUBSTR(v_json, v_pos, 1);
+                          skip_ws;
+                          IF v_char != ':' THEN EXIT; END IF;
+                          v_pos  := v_pos + 1;
+                          v_char := SUBSTR(v_json, v_pos, 1);
+                          skip_ws;
+                          IF v_char != '"' THEN EXIT; END IF;
+                          v_value := read_string;
+                          v_char  := SUBSTR(v_json, v_pos, 1);
+                          UTL_HTTP.SET_HEADER(p_req, v_name, v_value);
+                          skip_ws;
+                          IF v_char = ',' THEN
+                              v_pos  := v_pos + 1;
+                              v_char := SUBSTR(v_json, v_pos, 1);
+                          END IF;
+                      END LOOP;
+                  END apply_headers;
+
+                  PROCEDURE EXECUTE_API(
+                      p_endpoint    IN  VARCHAR2,
+                      p_method      IN  VARCHAR2,
+                      p_payload     IN  CLOB,
+                      p_headers     IN  CLOB,
+                      p_response    OUT CLOB,
+                      p_status_code OUT NUMBER
+                  ) IS
+                      v_req         UTL_HTTP.req;
+                      v_resp        UTL_HTTP.resp;
+                      v_method      VARCHAR2(10)  := UPPER(NVL(p_method, 'GET'));
+                      v_buffer      VARCHAR2(32767);
+                      v_has_payload BOOLEAN       := FALSE;
+                      v_payload_len PLS_INTEGER   := 0;
+                      v_offset      PLS_INTEGER   := 1;
+                      v_chunk       VARCHAR2(32767);
+                      v_chunk_len   PLS_INTEGER;
+                  BEGIN
+                      DBMS_LOB.CREATETEMPORARY(p_response, TRUE);
+                      UTL_HTTP.SET_TRANSFER_TIMEOUT(C_READ_TIMEOUT_SEC);
+                      v_has_payload := p_payload IS NOT NULL
+                                       AND DBMS_LOB.GETLENGTH(p_payload) > 0
+                                       AND v_method NOT IN ('GET', 'DELETE');
+                      IF v_has_payload THEN
+                          v_payload_len := DBMS_LOB.GETLENGTH(p_payload);
+                      END IF;
+                      v_req := UTL_HTTP.BEGIN_REQUEST(
+                                  url          => p_endpoint,
+                                  method       => v_method,
+                                  http_version => 'HTTP/1.1');
+                      IF v_has_payload THEN
+                          UTL_HTTP.SET_HEADER(v_req, 'Content-Type',   C_CONTENT_TYPE);
+                          UTL_HTTP.SET_HEADER(v_req, 'Content-Length', TO_CHAR(v_payload_len));
+                      END IF;
+                      apply_headers(v_req, p_headers);
+                      IF v_has_payload THEN
+                          LOOP
+                              EXIT WHEN v_offset > v_payload_len;
+                              v_chunk_len := LEAST(C_BUFFER_SIZE, v_payload_len - v_offset + 1);
+                              v_chunk     := DBMS_LOB.SUBSTR(p_payload, v_chunk_len, v_offset);
+                              UTL_HTTP.WRITE_TEXT(v_req, v_chunk);
+                              v_offset := v_offset + v_chunk_len;
+                          END LOOP;
+                      END IF;
+                      v_resp        := UTL_HTTP.GET_RESPONSE(v_req);
+                      p_status_code := v_resp.status_code;
+                      BEGIN
+                          LOOP
+                              UTL_HTTP.READ_TEXT(v_resp, v_buffer, C_BUFFER_SIZE);
+                              DBMS_LOB.WRITEAPPEND(p_response, LENGTH(v_buffer), v_buffer);
+                          END LOOP;
+                      EXCEPTION
+                          WHEN UTL_HTTP.END_OF_BODY THEN NULL;
+                      END;
+                      UTL_HTTP.END_RESPONSE(v_resp);
+                  EXCEPTION
+                      WHEN OTHERS THEN
+                          BEGIN UTL_HTTP.END_RESPONSE(v_resp); EXCEPTION WHEN OTHERS THEN NULL; END;
+                          p_status_code := 500;
+                          DBMS_LOB.CREATETEMPORARY(p_response, TRUE);
+                          DBMS_LOB.WRITEAPPEND(p_response, LENGTH(SQLERRM), SQLERRM);
+                  END EXECUTE_API;
+
+              END BPMNFLOW_API_HANDLER;
