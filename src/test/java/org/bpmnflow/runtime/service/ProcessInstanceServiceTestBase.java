@@ -37,6 +37,7 @@ abstract class ProcessInstanceServiceTestBase {
     @Mock WfInstanceActivityRepository instActivityRepo;
     @Mock WfInstanceVariableRepository variableRepo;
     @Mock VariableUpsertHelper         variableUpsertHelper;
+    @Mock org.bpmnflow.runtime.api.ApiHandlerExecutor apiHandlerExecutor;
 
     @InjectMocks
     ProcessInstanceService service;
