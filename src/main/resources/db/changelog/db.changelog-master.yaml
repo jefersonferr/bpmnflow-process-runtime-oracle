@@ -15,3 +15,5 @@ databaseChangeLog:
       file: db/changelog/V007_listing_duality_view.yaml
   - include:
       file: db/changelog/V008__occ_version.yaml
+  - include:
+      file: db/changelog/V009__plsql_api_handler.yaml

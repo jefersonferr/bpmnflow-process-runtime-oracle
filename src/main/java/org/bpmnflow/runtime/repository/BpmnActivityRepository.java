@@ -16,12 +16,10 @@ public interface BpmnActivityRepository extends JpaRepository<ProcessActivityEnt
 
     /**
      * Loads the activity with element AND conclusions eagerly via JOIN FETCH.
-     *
      * Replaces findById() wherever:
      *   - act.getElement().getBpmnId() is accessed (element proxy)
      *   - act.getConclusions().isEmpty() is accessed (conclusions collection)
      * outside a Hibernate session, to avoid LazyInitializationException.
-     *
      * Two separate LEFT JOIN FETCH are needed because Hibernate does not
      * support fetching multiple bags in a single query — splitting into
      * element (ManyToOne) + conclusions (OneToMany) is safe because

@@ -1,6 +1,6 @@
 # bpmnflow-process-runtime-oracle
 
-A Spring Boot runtime that turns `.bpmn` diagrams into persisted, versioned, REST-driven workflow instances — with Oracle 23ai-specific extensions.
+> A Spring Boot runtime that turns `.bpmn` diagrams into persisted, versioned, REST-driven workflow instances — with Oracle 23ai-specific extensions.
 
 [![Java](https://img.shields.io/badge/Java-21-blue)](https://openjdk.org/projects/jdk/21/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen)](https://spring.io/projects/spring-boot)
@@ -11,16 +11,37 @@ A Spring Boot runtime that turns `.bpmn` diagrams into persisted, versioned, RES
 
 ---
 
+## Table of Contents
+
+- [What this project adds](#what-this-project-adds)
+- [Ecosystem](#ecosystem)
+- [How it works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+- [API Reference](#api-reference)
+- [Optimistic Concurrency Control](#optimistic-concurrency-control)
+- [Oracle JSON Relational Duality Views](#oracle-json-relational-duality-views)
+- [Concurrent Variable Upsert](#concurrent-variable-upsert)
+- [Database Schema](#database-schema)
+- [Variable Types](#variable-types)
+- [Profiles](#profiles)
+- [Configuration Reference](#configuration-reference)
+- [Running Tests](#running-tests)
+- [Project Structure](#project-structure)
+- [FAQ](#faq)
+
+---
+
 ## What this project adds
 
 This repository extends [bpmnflow-process-runtime](https://github.com/jefersonferr/bpmnflow-process-runtime) with Oracle 23ai features that do not belong in the base runtime:
 
-- **JSON Relational Duality Views** — a parallel read/write path where Oracle maintains the full instance state as a single JSON document, in sync with the relational tables.
-- **ETag-based OCC (Duality View path)** — every `GET` and `POST /start` response includes an `ETag`. Pass `If-Match` on writes to detect concurrent modifications (HTTP 412 on conflict).
-- **`@Version` OCC (JPA path)** — Hibernate manages an `occ_version` column; concurrent writes produce HTTP 409.
-- **Oracle UCP connection pool** — replaces HikariCP for the Oracle profile; warms up the SODA context at startup via `initial-pool-size`.
-- **Concurrent variable upsert** — `VariableUpsertHelper` runs UPDATE → INSERT → UPDATE on the caller's JDBC connection, avoiding `REQUIRES_NEW` and connection pool contention.
-- **Paginated listing** — `GET /workflow` accepts `page` / `size`; responses include `X-Page`, `X-Page-Size`, and `X-Result-Count`.
+- **JSON Relational Duality Views** — a parallel read/write path where Oracle maintains the full instance state as a single JSON document, in sync with the relational tables
+- **ETag-based OCC (Duality View path)** — every `GET` and `POST /start` response includes an `ETag`; pass `If-Match` on writes to detect concurrent modifications (HTTP 412 on conflict)
+- **`@Version` OCC (JPA path)** — Hibernate manages an `occ_version` column; concurrent writes produce HTTP 409
+- **Oracle UCP connection pool** — replaces HikariCP for the Oracle profile; warms up the SODA context at startup via `initial-pool-size`
+- **Concurrent variable upsert** — `VariableUpsertHelper` runs UPDATE → INSERT → UPDATE on the caller's JDBC connection, avoiding `REQUIRES_NEW` and connection pool contention
+- **Paginated listing** — `GET /workflow` accepts `page` / `size`; responses include `X-Page`, `X-Page-Size`, and `X-Result-Count`
 
 The Oracle-only migrations (`V006`, `V007`) are scoped to the `oracle` Liquibase context and never run on H2, so local development and tests need no Oracle instance.
 
@@ -32,7 +53,7 @@ The Oracle-only migrations (`V006`, `V007`) are scoped to the `oracle` Liquibase
 |---|---|
 | [bpmnflow-core](https://github.com/jefersonferr/bpmnflow-core) | BPMN parser — reads `.bpmn` + YAML config, returns a `Workflow` object. No state, no database, no Spring. |
 | [bpmnflow-spring-boot-starter](https://github.com/jefersonferr/bpmnflow-spring-boot-starter) | Spring Boot auto-configuration — `WorkflowEngine` bean, `/process/**` endpoints, hot-swap support. |
-| [bpmnflow-process-runtime](https://github.com/jefersonferr/bpmnflow-process-runtime) | Base runtime — persistence, versioned deploy, instance lifecycle, typed variables, activity history. Any relational database. |
+| [bpmnflow-process-runtime](https://github.com/jefersonferr/bpmnflow-process-runtime) | Base runtime — persistence, versioned deploy, instance lifecycle, typed variables, activity history, API handler execution. Any relational database. |
 | **bpmnflow-process-runtime-oracle** | **This project** — base runtime plus Oracle 23ai Duality Views, ETag OCC, UCP pool, and Wallet support. |
 | [bpmnflow-spring-boot-demo](https://github.com/jefersonferr/bpmnflow-spring-boot-demo) | In-memory demo using the starter — no database required. |
 
@@ -43,7 +64,7 @@ The Oracle-only migrations (`V006`, `V007`) are scoped to the `oracle` Liquibase
 ### Deploy pipeline
 
 1. `bpmnflow-core` parses the model and extracts stages, activities, conclusions, rules, and inconsistencies.
-2. A DOM parser reads the raw XML and persists participants, lanes, elements, sequence flows, and extension properties.
+2. A DOM parser reads the raw XML and persists participants, lanes, elements, sequence flows, and extension properties — including `<camunda:connector>` blocks stored under the `connector.*` namespace in `bpmn_extension_property`.
 3. The YAML config is SHA-256 hashed and stored, so config changes do not force a model redeploy.
 4. A new process version is created; existing instances keep running on their original version.
 
@@ -53,10 +74,10 @@ The Oracle-only migrations (`V006`, `V007`) are scoped to the `oracle` Liquibase
 
 ```
 bpmnflow.duality.enabled=false  (default)
-  └─ ProcessInstanceService        → JPA + @Version → HTTP 409 on conflict
+  → ProcessInstanceService          → JPA + @Version → HTTP 409 on conflict
 
 bpmnflow.duality.enabled=true
-  └─ ProcessInstanceDualityService → Duality View + ETag → HTTP 412 on conflict
+  → ProcessInstanceDualityService   → Duality View + ETag → HTTP 412 on conflict
 ```
 
 Both paths use the same REST endpoints and the same relational tables. The only visible difference is the OCC mechanism and the presence of `ETag` / `If-Match` headers.
@@ -107,24 +128,24 @@ mvn spring-boot:run -Dspring-boot.run.profiles=oracle
 
 ### 4. Enable the Duality View path
 
-```bash
-export BPMNFLOW_DUALITY_ENABLED=true
-mvn spring-boot:run -Dspring-boot.run.profiles=oracle
-```
-
-Or in `application.yaml`:
-
 ```yaml
+# application.yaml
 bpmnflow:
   duality:
     enabled: true
+```
+
+Or via environment variable:
+
+```bash
+BPMNFLOW_DUALITY_ENABLED=true mvn spring-boot:run -Dspring-boot.run.profiles=oracle
 ```
 
 ---
 
 ## API Reference
 
-### Deploy
+### Deploy — Model Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -138,7 +159,14 @@ curl -X POST http://localhost:8080/bpmn/deploy \
   -F "processKey=PIZZA_DELIVERY"
 ```
 
-### Workflow
+### Process Catalog — Activity Inspection
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/process/activities?versionId={id}` | All activities for a given version. Service tasks with connector definitions include an `apiHandler` block. |
+| `GET` | `/process/api-activities?versionId={id}` | Only activities that carry a connector definition. |
+
+### Workflow — Instance Execution
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -168,7 +196,7 @@ Response headers:
 
 ### JPA path — `@Version` / HTTP 409
 
-Hibernate manages an `occ_version` column on `wf_process_instance`. On every UPDATE, it checks that the stored version matches the one read. If two concurrent transactions both read version `N` and try to save, the second finds 0 rows updated and throws `OptimisticLockException`, which the `GlobalExceptionHandler` maps to HTTP 409.
+Hibernate manages an `occ_version` column on `wf_process_instance`. On every UPDATE, it checks that the stored version matches the one read. If two concurrent transactions both read version `N` and try to save, the second finds 0 rows updated and throws `OptimisticLockException`, which `GlobalExceptionHandler` maps to HTTP 409.
 
 No client-side header is needed. The client must re-fetch and retry.
 
@@ -191,7 +219,7 @@ Content-Type: application/json
 # HTTP 412 Precondition Failed
 ```
 
-Omitting `If-Match` does not disable OCC: Oracle still enforces it internally via the `_metadata` round-trip. The difference is that `If-Match` makes the intent explicit and gives the client a clearer contract.
+Omitting `If-Match` does not disable OCC — Oracle still enforces it internally via the `_metadata` round-trip. The difference is that `If-Match` makes the intent explicit and gives the client a clearer contract.
 
 After a successful write, the response includes the new ETag, so the next write can proceed without an extra `GET`.
 
@@ -236,7 +264,7 @@ Activities are not embedded because Oracle does not permit an explicit `JOIN` in
 
 ## Concurrent Variable Upsert
 
-The standard JPA pattern (`findById` + `save`) has a race window: two threads can both see that a variable does not exist and both attempt to insert it, hitting the unique constraint. `VariableUpsertHelper` avoids this with an UPDATE-first approach:
+The standard JPA pattern (`findById` + `save`) has a race window: two threads can both see that a variable does not exist and both attempt to insert it, hitting the unique constraint. `VariableUpsertHelper` avoids this with an UPDATE-first approach on the caller's JDBC connection:
 
 ```
 1. UPDATE ... WHERE instance_id=? AND variable_key=?
@@ -253,7 +281,7 @@ The standard JPA pattern (`findById` + `save`) has a race window: two threads ca
 
 The `ORA-00001` is caught inside `JdbcTemplate.execute(ConnectionCallback)`, before Spring's `PersistenceExceptionTranslationInterceptor` can wrap it and flag the transaction for rollback. The caller's transaction remains valid.
 
-`REQUIRES_NEW` is not used because it would need a second connection from the pool for every variable write, which causes starvation under concurrent load.
+`REQUIRES_NEW` is not used because it would need a second connection from the pool for every variable write, causing starvation under concurrent load.
 
 ---
 
@@ -267,8 +295,18 @@ The `ORA-00001` is caught inside `JdbcTemplate.execute(ConnectionCallback)`, bef
 | `V004__derived_data.yaml` | all | `process_stage`, `process_activity`, `process_conclusion`, `process_rule`, `process_inconsistency` |
 | `V005__runtime.yaml` | all | `wf_process_instance`, `wf_instance_activity`, `wf_instance_variable` |
 | `V006__duality_views.yaml` | oracle | `wf_process_instance_dv` |
-| `V007_listing_duality_view.yaml` | oracle | `wf_instance_listing_dv` |
+| `V007__listing_duality_view.yaml` | oracle | `wf_instance_listing_dv` |
 | `V008__occ_version.yaml` | all | `occ_version BIGINT` on `wf_process_instance` |
+
+### Extension property namespaces
+
+`bpmn_extension_property` stores three distinct namespaces for service tasks:
+
+| Namespace | Written by | Used by |
+|---|---|---|
+| `stage`, `activity` | `StructuralPersistor` from `<camunda:property>` | `DerivedDataPersistor` to identify activities |
+| `connector.*` | `StructuralPersistor` from `<camunda:connector>` | `BpmnCatalogService` to populate the catalog API |
+| `connectorId`, `endpoint`, `method`, `outputMapping.*` | Manual via `<camunda:property>` | `ApiHandlerExecutor` at runtime |
 
 ---
 
@@ -295,18 +333,18 @@ Type mismatches return HTTP 400 before any write reaches the database.
 |---------|----------|-------|
 | _(default)_ | configurable | Set `spring.datasource` manually |
 | `h2` | H2 file | Persists in `~/bpmnflow-runtime.mv.db` |
-| `oracle` | Oracle ADB | UCP + mTLS Wallet; oracle Liquibase context applied |
+| `oracle` | Oracle ADB | UCP + mTLS Wallet; `oracle` Liquibase context applied |
 | `test` | H2 in-memory | Clean per test class; used by `mvn test` |
 
 ```bash
-# H2
+# H2 — local development
 mvn spring-boot:run -Dspring-boot.run.profiles=h2
 
-# Oracle, JPA path
+# Oracle — JPA path
 ORACLE_URL=... DB_USER=... DB_PASSWORD=... \
   mvn spring-boot:run -Dspring-boot.run.profiles=oracle
 
-# Oracle, Duality View path
+# Oracle — Duality View path
 ORACLE_URL=... DB_USER=... DB_PASSWORD=... BPMNFLOW_DUALITY_ENABLED=true \
   mvn spring-boot:run -Dspring-boot.run.profiles=oracle
 ```
@@ -372,11 +410,11 @@ No Oracle instance needed — all tests run on H2 in-memory.
 | `ConclusionValidationTest` | Unit | Missing code, invalid code, already-completed guard |
 | `VariableTypeTest` | Unit | All 6 types: valid and invalid values, conversion |
 
-JaCoCo enforces 75% branch coverage; the build fails below that threshold.
+JaCoCo enforces **75% branch coverage** — the build fails below that threshold.
 
 ```bash
 # Coverage report at target/site/jacoco/index.html
-mvn test
+mvn test site -DgenerateReports=false
 ```
 
 ---
@@ -392,10 +430,15 @@ bpmnflow-process-runtime-oracle/
 │   │   │   ├── GlobalExceptionHandler.java
 │   │   │   ├── ETagConflictException.java
 │   │   │   ├── SwaggerConfig.java
+│   │   │   ├── api/
+│   │   │   │   ├── ApiHandlerExecutor.java
+│   │   │   │   └── SpringApiHandlerProvider.java
 │   │   │   ├── controller/
 │   │   │   │   ├── DeployController.java
+│   │   │   │   ├── ProcessCatalogController.java
 │   │   │   │   └── ProcessController.java
 │   │   │   ├── dto/
+│   │   │   │   ├── ActivityNodeResponse.java
 │   │   │   │   ├── WorkflowSummaryProjection.java
 │   │   │   │   └── WorkflowSummaryResponse.java
 │   │   │   ├── duality/
@@ -417,6 +460,8 @@ bpmnflow-process-runtime-oracle/
 │   │   │       ├── ProcessInstanceService.java
 │   │   │       ├── VariableUpsertHelper.java
 │   │   │       └── deploy/
+│   │   │           ├── StructuralPersistor.java
+│   │   │           └── DerivedDataPersistor.java
 │   │   └── resources/
 │   │       ├── application.yaml
 │   │       ├── pizza-delivery.bpmn
@@ -428,11 +473,12 @@ bpmnflow-process-runtime-oracle/
 │   │           ├── V004__derived_data.yaml
 │   │           ├── V005__runtime.yaml
 │   │           ├── V006__duality_views.yaml
-│   │           ├── V007_listing_duality_view.yaml
+│   │           ├── V007__listing_duality_view.yaml
 │   │           └── V008__occ_version.yaml
 │   └── test/
-│       ├── java/org/bpmnflow/runtime/service/
-│       └── resources/application-test.yaml
+│       ├── java/org/bpmnflow/runtime/
+│       └── resources/
+│           └── application-test.yaml
 └── pom.xml
 ```
 

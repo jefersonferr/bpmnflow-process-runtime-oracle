@@ -31,6 +31,8 @@ bpmnflow:
   expose-api: true
   duality:
     enabled: false   # true → ProcessController uses ProcessInstanceDualityService
+  api-handler:
+    provider: plsql
 # ----- Swagger -----
 springdoc:
   api-docs:
@@ -39,6 +41,9 @@ springdoc:
     path: /swagger-ui.html
     tags-sorter: alpha
     operations-sorter: method
+  packages-to-scan:
+    - org.bpmnflow.runtime
+    - org.bpmnflow.starter.api
   paths-to-exclude: /process/model
 ---
 # =============================================================================
@@ -100,7 +105,7 @@ spring:
     type: oracle.ucp.jdbc.PoolDataSource
     oracleucp:
       connection-factory-class-name: oracle.jdbc.pool.OracleDataSource
-      initial-pool-size: ${ORACLE_POOL_INITIAL:5}   # connections created and warmed up at startup
+      initial-pool-size: ${ORACLE_POOL_INITIAL:5}
       min-pool-size: ${ORACLE_POOL_MIN:2}
       max-pool-size: ${ORACLE_POOL_MAX:10}
       connection-wait-duration-in-millis: ${ORACLE_POOL_WAIT_MS:30000}
@@ -121,4 +126,4 @@ spring:
     contexts: oracle
 bpmnflow:
   duality:
-    enabled: ${BPMNFLOW_DUALITY_ENABLED:false}   # enables ProcessInstanceDualityService on Oracle profile
+    enabled: ${BPMNFLOW_DUALITY_ENABLED:false}
