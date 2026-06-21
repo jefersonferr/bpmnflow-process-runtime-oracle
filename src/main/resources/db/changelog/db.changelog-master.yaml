@@ -17,3 +17,5 @@ databaseChangeLog:
       file: db/changelog/V008__occ_version.yaml
   - include:
       file: db/changelog/V009__plsql_api_handler.yaml
+  - include:
+      file: db/changelog/V010__mcp_api_handler.yaml

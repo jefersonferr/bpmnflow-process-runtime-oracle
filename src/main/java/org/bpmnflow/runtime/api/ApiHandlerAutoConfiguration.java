@@ -18,20 +18,26 @@ import org.springframework.web.client.RestTemplate;
  *   api-handler:
  *     provider: spring   # default — SpringApiHandlerProvider (universal fallback)
  *                plsql   # PlSqlApiHandlerProvider (Oracle 19c+ with UTL_HTTP ACL)
+ *                mcp     # McpApiHandlerProvider (Oracle Autonomous AI Database)
  * </pre>
  *
  * <p>When {@code provider: plsql} is set, {@link PlSqlApiHandlerProvider} is
  * registered and the {@link SpringApiHandlerProvider} bean is suppressed
  * ({@code @ConditionalOnMissingBean}).</p>
  *
+ * <p>When {@code provider: mcp} is set, {@code McpApiHandlerAutoConfiguration}
+ * registers {@code McpApiHandlerProvider} and the {@link SpringApiHandlerProvider}
+ * fallback is suppressed via {@code @ConditionalOnProperty(matchIfMissing=false)}.</p>
+ *
  * <p>Applications that declare their own {@link ApiHandlerProvider} bean
- * (e.g. {@code McpApiHandlerProvider}, {@code SelectAiApiHandlerProvider})
- * automatically replace both defaults without any further configuration.</p>
+ * (e.g. {@code SelectAiApiHandlerProvider}) automatically replace all defaults
+ * without any further configuration.</p>
  *
  * <h2>Provider resolution order</h2>
  * <ol>
  *   <li>Application-declared {@link ApiHandlerProvider} bean (highest priority)</li>
  *   <li>{@link PlSqlApiHandlerProvider} when {@code bpmnflow.api-handler.provider=plsql}</li>
+ *   <li>{@code McpApiHandlerProvider} when {@code bpmnflow.api-handler.provider=mcp}</li>
  *   <li>{@link SpringApiHandlerProvider} — universal fallback (default)</li>
  * </ol>
  */
@@ -47,16 +53,12 @@ public class ApiHandlerAutoConfiguration {
     /**
      * Registers {@link PlSqlApiHandlerProvider} when
      * {@code bpmnflow.api-handler.provider=plsql} is set.
-     *
-     * <p>Takes precedence over {@link SpringApiHandlerProvider} because it
-     * registers a concrete {@link ApiHandlerProvider} bean, which causes
-     * the {@code @ConditionalOnMissingBean} on the Spring fallback to fire.</p>
      */
     @Bean
     @ConditionalOnMissingBean(ApiHandlerProvider.class)
     @ConditionalOnProperty(
-            name         = "bpmnflow.api-handler.provider",
-            havingValue  = "plsql"
+            name        = "bpmnflow.api-handler.provider",
+            havingValue = "plsql"
     )
     public ApiHandlerProvider plSqlApiHandlerProvider(JdbcTemplate jdbcTemplate,
                                                       ObjectMapper objectMapper) {
@@ -66,9 +68,18 @@ public class ApiHandlerAutoConfiguration {
     /**
      * Registers {@link SpringApiHandlerProvider} as the universal fallback
      * when no other {@link ApiHandlerProvider} bean is present.
+     *
+     * <p>Explicitly excluded for {@code provider=plsql} and {@code provider=mcp}
+     * to prevent this fallback from winning the {@code @ConditionalOnMissingBean}
+     * race against provider-specific configurations processed in the same phase.</p>
      */
     @Bean
     @ConditionalOnMissingBean(ApiHandlerProvider.class)
+    @ConditionalOnProperty(
+            name        = "bpmnflow.api-handler.provider",
+            havingValue = "spring",
+            matchIfMissing = true
+    )
     public ApiHandlerProvider springApiHandlerProvider(RestTemplate restTemplate,
                                                        ObjectMapper objectMapper) {
         return new SpringApiHandlerProvider(restTemplate, objectMapper);

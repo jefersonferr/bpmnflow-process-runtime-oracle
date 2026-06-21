@@ -30,9 +30,9 @@ bpmnflow:
   config-path: classpath:bpmn-config.yaml
   expose-api: true
   duality:
-    enabled: false   # true → ProcessController uses ProcessInstanceDualityService
+    enabled: false   # true ? ProcessController uses ProcessInstanceDualityService
   api-handler:
-    provider: plsql
+    provider: mcp
 # ----- Swagger -----
 springdoc:
   api-docs:
@@ -47,7 +47,7 @@ springdoc:
   paths-to-exclude: /process/model
 ---
 # =============================================================================
-# H2 profile — run locally without a relational database
+# H2 profile ? run locally without a relational database
 # Usage: -Dspring.profiles.active=h2
 # Data persists in ~/bpmnflow-runtime.mv.db between restarts.
 # Use MODE=Oracle for closest SQL compatibility.
@@ -76,18 +76,18 @@ spring:
       path: /h2-console
 ---
 # =============================================================================
-# Oracle profile — Oracle Autonomous Database (OCI) with Wallet mTLS
+# Oracle profile ? Oracle Autonomous Database (OCI) with Wallet mTLS
 # Usage: -Dspring.profiles.active=oracle
 #
 # Prerequisites:
 #   1. Download the wallet from the OCI console (Instance Wallet) and extract
-#      it to /opt/oracle/wallet (or another path — update ORACLE_WALLET_LOCATION)
+#      it to /opt/oracle/wallet (or another path ? update ORACLE_WALLET_LOCATION)
 #   2. Set the environment variables DB_USER and DB_PASSWORD
 #   3. Confirm the correct TNS name in tnsnames.ora inside the wallet
 #      (usually <db_name>_high, <db_name>_medium, <db_name>_low)
 #
 # The oracle-spring-boot-starter-wallet configures mTLS automatically from
-# spring.datasource.wallet.* — no need to set javax.net.ssl.* manually.
+# spring.datasource.wallet.* ? no need to set javax.net.ssl.* manually.
 #
 # The connection pool used is Oracle UCP (Universal Connection Pool),
 # which initialises the SODA context during application startup via
@@ -122,8 +122,18 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.OracleDialect
   liquibase:
-    # V006__duality_views.sql contains Oracle 23ai syntax — do not run on H2
+    # V006__duality_views.sql contains Oracle 23ai syntax ? do not run on H2
     contexts: oracle
 bpmnflow:
   duality:
     enabled: ${BPMNFLOW_DUALITY_ENABLED:false}
+  api-handler:
+    mcp:
+      # OAuth 2.1 token endpoint ? replace MCP_DATABASE_OCID with the ADB instance OCID
+      auth-url: https://dataaccess.adb.sa-saopaulo-1.oraclecloudapps.com/adb/auth/v1/databases/${MCP_DATABASE_OCID}/token
+      username: ${MCP_DB_USERNAME}
+      password: ${MCP_DB_PASSWORD}
+      # Oracle issues tokens valid for 60 min; refresh 5 min before expiry
+      token-ttl-minutes: 55
+      # Agent Team registered by V010__mcp_api_handler.yaml
+      team-name: BPMNFLOW_TEAM

@@ -1,0 +1,232 @@
+databaseChangeLog:
+
+  # ===========================================================================
+  # MCP API Handler — Oracle Autonomous AI Database (19.29+ / 26ai) only
+  #
+  # Creates the BPMNFLOW_CALL_API function and the Select AI Agent objects
+  # (tool, agent, task, team) that power McpApiHandlerProvider.
+  #
+  # The PL/SQL function uses DBMS_CLOUD.SEND_REQUEST so that outbound REST
+  # calls are made by the managed ADB MCP Server — no Oracle network ACL
+  # is required on the BPMNFLOW schema.
+  #
+  # Each changeset uses splitStatements: false inside changes (same pattern
+  # as V009__plsql_api_handler.yaml) to prevent Liquibase from splitting
+  # the PL/SQL body on semicolons or variable declarations.
+  #
+  # Prerequisites (run once as DBA before starting the application):
+  #
+  #   1. Enable MCP Server in OCI Console (free-form tag):
+  #        Tag Name:  adb$feature
+  #        Tag Value: {"name":"mcp_server","enable":true}
+  #
+  #   2. Create the AI Profile as BPMNFLOW:
+  #        BEGIN
+  #          DBMS_CLOUD_AI.CREATE_PROFILE(
+  #            profile_name => 'BPMNFLOW_AI_PROFILE',
+  #            attributes   => '{
+  #              "provider": "oci",
+  #              "oci_compartment_id": "<compartment-ocid>"
+  #            }'
+  #          );
+  #        END;
+  #
+  #   3. Grant EXECUTE (as ADMIN):
+  #        GRANT EXECUTE ON DBMS_CLOUD_AI TO BPMNFLOW;
+  #        GRANT EXECUTE ON DBMS_CLOUD_AI_AGENT TO BPMNFLOW;
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Changeset 1 — PL/SQL function: BPMNFLOW_CALL_API
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-1-bpmnflow-call-api-function
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              CREATE OR REPLACE FUNCTION BPMNFLOW_CALL_API(
+                  p_endpoint IN VARCHAR2,
+                  p_method   IN VARCHAR2,
+                  p_payload  IN VARCHAR2
+              ) RETURN CLOB AS
+                  v_response DBMS_CLOUD_TYPES.RESP;
+                  v_body     CLOB;
+              BEGIN
+                  v_response := DBMS_CLOUD.SEND_REQUEST(
+                      credential_name => NULL,
+                      uri             => p_endpoint,
+                      method          => p_method,
+                      body            => CASE
+                                             WHEN p_payload IS NOT NULL AND p_payload != ''
+                                             THEN UTL_RAW.CAST_TO_RAW(p_payload)
+                                             ELSE NULL
+                                         END,
+                      headers         => '{"Content-Type":"application/json","Accept":"application/json"}'
+                  );
+                  v_body := DBMS_CLOUD.GET_RESPONSE_TEXT(v_response);
+                  RETURN v_body;
+              EXCEPTION
+                  WHEN OTHERS THEN
+                      RETURN JSON_OBJECT('error' VALUE SQLERRM, 'errcode' VALUE TO_CHAR(SQLCODE));
+              END BPMNFLOW_CALL_API;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 2 — Drop existing tool (idempotent)
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-2a-drop-bpmnflow-api-caller-tool
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.DROP_TOOL(tool_name => 'BPMNFLOW_API_CALLER', force => TRUE);
+              EXCEPTION
+                WHEN OTHERS THEN NULL;
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 3 — Create tool: BPMNFLOW_API_CALLER
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-2b-create-bpmnflow-api-caller-tool
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_TOOL(
+                    tool_name  => 'BPMNFLOW_API_CALLER',
+                    attributes => '{"instruction":"Call an external REST API on behalf of a BPMN process activity. Use the provided endpoint (full URL), method (GET, POST, PUT or DELETE) and payload (JSON string, empty string for GET). Return the raw JSON response body from the API without modification.","function":"BPMNFLOW_CALL_API","tool_inputs":[{"name":"p_endpoint","description":"Full URL of the external REST API endpoint to call."},{"name":"p_method","description":"HTTP method: GET, POST, PUT or DELETE."},{"name":"p_payload","description":"JSON request body as a string. Pass an empty string for GET or DELETE requests."}]}'
+                );
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 4 — Drop existing agent (idempotent)
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-3a-drop-bpmnflow-agent
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.DROP_AGENT(agent_name => 'BPMNFLOW_AGENT');
+              EXCEPTION
+                WHEN OTHERS THEN NULL;
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 5 — Create agent: BPMNFLOW_AGENT
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-3b-create-bpmnflow-agent
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_AGENT(
+                    agent_name => 'BPMNFLOW_AGENT',
+                    attributes => '{"profile_name":"BPMNFLOW_AI_PROFILE","role":"You are a BPMN process runtime agent. Your sole responsibility is to execute external REST API calls on behalf of automated business process activities. You receive a set of process variables and must determine the most appropriate values to use when calling the available tool. Always respond with a single valid JSON object containing only the API response data. Never add explanation, reasoning text, markdown formatting, or code blocks to your response. Never ask clarifying questions.","enable_human_tool":"false"}'
+                );
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 6 — Drop existing task (idempotent)
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-4a-drop-bpmnflow-task
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.DROP_TASK(task_name => 'BPMNFLOW_API_TASK', force => TRUE);
+              EXCEPTION
+                WHEN OTHERS THEN NULL;
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 7 — Create task: BPMNFLOW_API_TASK
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-4b-create-bpmnflow-task
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_TASK(
+                    task_name  => 'BPMNFLOW_API_TASK',
+                    attributes => '{"instruction":"Analyze the provided BPMN process variables. Identify the target API endpoint, HTTP method and request payload from the available variables. Call the BPMNFLOW_API_CALLER tool with the most suitable variable values. Return only the raw JSON response from the API call. Do not add any explanation, summary or additional text.","tools":["BPMNFLOW_API_CALLER"],"enable_human_tool":"false"}'
+                );
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 8 — Drop existing team (idempotent)
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-5a-drop-bpmnflow-team
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.DROP_TEAM(team_name => 'BPMNFLOW_TEAM', force => TRUE);
+              EXCEPTION
+                WHEN OTHERS THEN NULL;
+              END;
+
+  # ---------------------------------------------------------------------------
+  # Changeset 9 — Create team: BPMNFLOW_TEAM
+  # ---------------------------------------------------------------------------
+  - changeSet:
+      id: V010-5b-create-bpmnflow-team
+      author: bpmnflow
+      dbms: oracle
+      context: oracle
+      runOnChange: true
+      changes:
+        - sql:
+            splitStatements: false
+            sql: >-
+              BEGIN
+                DBMS_CLOUD_AI_AGENT.CREATE_TEAM(
+                    team_name  => 'BPMNFLOW_TEAM',
+                    attributes => '{"agents":[{"name":"BPMNFLOW_AGENT","task":"BPMNFLOW_API_TASK"}],"process":"sequential"}'
+                );
+              END;
