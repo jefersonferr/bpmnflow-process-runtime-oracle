@@ -1,8 +1,9 @@
 package org.bpmnflow.runtime.api.mcp;
 
-import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import lombok.Getter;
 import org.bpmnflow.runtime.api.ApiHandlerException;
 
@@ -22,8 +23,8 @@ import org.bpmnflow.runtime.api.ApiHandlerException;
  * This class solves the problem in two steps:</p>
  * <ol>
  *   <li>Parse the outer envelope with a <em>lenient</em> {@link ObjectMapper}
- *       that accepts unquoted control characters
- *       ({@link JsonParser.Feature#ALLOW_UNQUOTED_CONTROL_CHARS}).</li>
+ *       that accepts unescaped control characters
+ *       ({@link JsonReadFeature#ALLOW_UNESCAPED_CONTROL_CHARS}).</li>
  *   <li>Extract the {@code "result"} string value via {@link JsonNode#asText()},
  *       collapse its embedded newlines, and parse it as the effective JSON root
  *       with the standard mapper.</li>
@@ -71,10 +72,11 @@ public class McpAgentResponse {
         }
 
         // Oracle RUN_TEAM embeds literal newline characters inside the "result"
-        // string value, which violates RFC 7159. ALLOW_UNQUOTED_CONTROL_CHARS
+        // string value, which violates RFC 7159. ALLOW_UNESCAPED_CONTROL_CHARS
         // lets Jackson parse the outer envelope without rejecting the document.
-        ObjectMapper lenient = objectMapper.copy()
-                .enable(JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS);
+        ObjectMapper lenient = JsonMapper.builder()
+                .enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS)
+                .build();
 
         // Strategy 1 — direct lenient parse of the full text
         String trimmed = agentText.trim();
