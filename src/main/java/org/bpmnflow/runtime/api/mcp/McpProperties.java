@@ -27,7 +27,7 @@ public class McpProperties {
 
     /**
      * OAuth 2.1 token endpoint of the Autonomous AI Database.
-     * Pattern: {@code https://dataaccess.adb.{region}.oraclecloudapps.com/adb/auth/v1/databases/{ocid}/token}
+     * Pattern: {@code https://dataaccess.adb.<region>.oraclecloudapps.com/adb/auth/v1/databases/<ocid>/token}
      */
     private String authUrl;
 

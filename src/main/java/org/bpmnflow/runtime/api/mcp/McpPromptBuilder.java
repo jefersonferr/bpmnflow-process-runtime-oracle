@@ -21,7 +21,7 @@ import java.util.Map;
  * <pre>
  * Execute the following API call for BPMN activity 'SC-PMT_AUTH' (instance: 51404):
  *
- * - endpoint: https://api.example.com/v1/authorize
+ * - endpoint: {@code https://api.example.com/v1/authorize}
  * - method:   POST
  * - payload:  {"customer_id":"12345","amount":"100.00","currency":"BRL"}
  *

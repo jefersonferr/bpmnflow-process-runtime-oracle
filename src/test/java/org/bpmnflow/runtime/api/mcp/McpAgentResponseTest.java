@@ -76,8 +76,11 @@ class McpAgentResponseTest {
 
         @Test
         @DisplayName("unwraps Oracle envelope with literal newlines in result string")
+        @SuppressWarnings("StringConcatenationMissingWhitespace")
         void unwrapsOracleEnvelopeWithLiteralNewlines() {
             // Exact format returned by DBMS_CLOUD_AI_AGENT.RUN_TEAM
+            // NOTE: literal \n characters in the string are intentional — they
+            // reproduce the RFC-7159-violating payload that Oracle RUN_TEAM returns.
             String agentText = "{\"status\":\"success\",\"result\":\"{\n" +
                     "  \\\"entregador_nome\\\": \\\"Ana Oliveira\\\",\n" +
                     "  \\\"tempo_estimado_entrega\\\": 31,\n" +
@@ -128,9 +131,10 @@ class McpAgentResponseTest {
         @Test
         @DisplayName("extracts JSON object when agent prepends reasoning text")
         void extractsJsonAfterReasoningText() {
-            String agentText = "Analyzed the process variables.\n"
-                    + "Calling the API tool with the resolved parameters.\n"
-                    + "{\"orderId\": \"42\", \"status\": \"CONFIRMED\"}";
+            String agentText = """
+                    Analyzed the process variables.
+                    Calling the API tool with the resolved parameters.
+                    {"orderId": "42", "status": "CONFIRMED"}""";
 
             McpAgentResponse response = McpAgentResponse.parse(agentText, objectMapper);
 

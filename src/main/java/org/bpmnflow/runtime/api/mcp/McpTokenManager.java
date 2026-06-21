@@ -82,10 +82,12 @@ public class McpTokenManager {
         );
 
         try {
-            ResponseEntity<Map> response = restTemplate.postForEntity(
-                    properties.getAuthUrl(),
-                    new HttpEntity<>(body, headers),
-                    Map.class);
+            @SuppressWarnings("unchecked")
+            ResponseEntity<Map<String, Object>> response =
+                    (ResponseEntity<Map<String, Object>>) (ResponseEntity<?>) restTemplate.postForEntity(
+                            properties.getAuthUrl(),
+                            new HttpEntity<>(body, headers),
+                            Map.class);
 
             if (response.getBody() == null
                     || !response.getBody().containsKey("access_token")) {

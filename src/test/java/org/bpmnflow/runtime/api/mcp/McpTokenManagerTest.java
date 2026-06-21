@@ -109,10 +109,10 @@ class McpTokenManagerTest {
         @Test
         @DisplayName("throws ApiHandlerException when response contains no access_token field")
         void throwsWhenNoAccessTokenInResponse() {
-            ResponseEntity<Map> response = new ResponseEntity<>(
+            ResponseEntity<Map<String, Object>> response = new ResponseEntity<>(
                     Map.of("error", "invalid_credentials"), HttpStatus.OK);
             when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
-                    .thenReturn(response);
+                    .thenReturn((ResponseEntity) response);
 
             ApiHandlerException ex = assertThrows(ApiHandlerException.class,
                     () -> tokenManager.getToken());
@@ -136,9 +136,9 @@ class McpTokenManagerTest {
     // -------------------------------------------------------------------------
 
     private void mockAuthEndpoint(String token) {
-        ResponseEntity<Map> response = new ResponseEntity<>(
+        ResponseEntity<Map<String, Object>> response = new ResponseEntity<>(
                 Map.of("access_token", token), HttpStatus.OK);
         when(restTemplate.postForEntity(anyString(), any(), eq(Map.class)))
-                .thenReturn(response);
+                .thenReturn((ResponseEntity) response);
     }
 }

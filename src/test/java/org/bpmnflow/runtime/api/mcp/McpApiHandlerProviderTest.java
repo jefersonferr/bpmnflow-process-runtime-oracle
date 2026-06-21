@@ -60,7 +60,7 @@ class McpApiHandlerProviderTest {
         // Wire JdbcTemplate.execute(ConnectionCallback) → lambda → mock Connection
         lenient().when(jdbcTemplate.execute(any(ConnectionCallback.class)))
                 .thenAnswer(inv -> {
-                    ConnectionCallback<?> cb = inv.getArgument(0);
+                    ConnectionCallback<Object> cb = inv.getArgument(0);
                     return cb.doInConnection(connection);
                 });
 
@@ -76,8 +76,7 @@ class McpApiHandlerProviderTest {
     // Helper: build ApiHandlerContext using builder (consistent with project SPI)
     // -------------------------------------------------------------------------
 
-    private ApiHandlerContext context(String payload,
-                                      Map<String, String> vars,
+    private ApiHandlerContext context(Map<String, String> vars,
                                       List<ApiHandlerContext.OutputMapping> mappings) {
         return ApiHandlerContext.builder()
                 .instanceId(INSTANCE_ID)
@@ -85,7 +84,7 @@ class McpApiHandlerProviderTest {
                 .endpoint(ENDPOINT)
                 .method(METHOD)
                 .headers(Map.of())
-                .payloadTemplate(payload)
+                .payloadTemplate(null)
                 .instanceVariables(vars)
                 .outputMappings(mappings)
                 .build();
@@ -118,7 +117,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamSuccess("{\"pagamento_txn_id\": \"TXN-999\", \"pagamento_status\": \"APPROVED\"}");
 
             Map<String, String> result = provider.execute(context(
-                    null, Map.of(),
+                    Map.of(),
                     List.of(
                             new ApiHandlerContext.OutputMapping("pagamento_txn_id",  "$.transaction_id"),
                             new ApiHandlerContext.OutputMapping("pagamento_status",   "$.status")
@@ -134,7 +133,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamSuccess("{\"any\": \"value\"}");
 
             Map<String, String> result = provider.execute(
-                    context(null, Map.of(), List.of()));
+                    context(Map.of(), List.of()));
 
             assertTrue(result.isEmpty());
         }
@@ -145,7 +144,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamSuccess("{\"other\": \"value\"}");
 
             Map<String, String> result = provider.execute(context(
-                    null, Map.of(),
+                    Map.of(),
                     List.of(new ApiHandlerContext.OutputMapping("pagamento_txn_id", "$.id"))));
 
             assertTrue(result.containsKey("pagamento_txn_id"));
@@ -160,7 +159,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamSuccess(agentText);
 
             Map<String, String> result = provider.execute(context(
-                    null, Map.of(),
+                    Map.of(),
                     List.of(
                             new ApiHandlerContext.OutputMapping("orderId", "$.orderId"),
                             new ApiHandlerContext.OutputMapping("status",  "$.status")
@@ -176,7 +175,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamSuccess("{\"tempo_estimado_entrega\": 35}");
 
             Map<String, String> result = provider.execute(context(
-                    null, Map.of(),
+                    Map.of(),
                     List.of(new ApiHandlerContext.OutputMapping(
                             "tempo_estimado_entrega", "$.minutes"))));
 
@@ -188,7 +187,7 @@ class McpApiHandlerProviderTest {
         void registersOutParameterAsClob() throws Exception {
             stubRunTeamSuccess("{\"ok\": true}");
 
-            provider.execute(context(null, Map.of(), List.of()));
+            provider.execute(context(Map.of(), List.of()));
 
             verify(callableStatement).registerOutParameter(1, OracleTypes.CLOB);
         }
@@ -198,7 +197,7 @@ class McpApiHandlerProviderTest {
         void passesTeamName() throws Exception {
             stubRunTeamSuccess("{\"ok\": true}");
 
-            provider.execute(context(null, Map.of(), List.of()));
+            provider.execute(context(Map.of(), List.of()));
 
             verify(callableStatement).setString(2, "BPMNFLOW_TEAM");
         }
@@ -211,7 +210,7 @@ class McpApiHandlerProviderTest {
             // Stub getString(1) for CREATE_CONVERSATION step
             when(callableStatement.getString(1)).thenReturn("test-conv-id");
 
-            provider.execute(context(null, Map.of(), List.of()));
+            provider.execute(context(Map.of(), List.of()));
 
             // Step 1: CREATE_CONVERSATION OUT param registered as VARCHAR
             verify(callableStatement).registerOutParameter(1, java.sql.Types.VARCHAR);
@@ -234,7 +233,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamNull();
 
             ApiHandlerException ex = assertThrows(ApiHandlerException.class,
-                    () -> provider.execute(context(null, Map.of(), List.of())));
+                    () -> provider.execute(context(Map.of(), List.of())));
             assertTrue(ex.getMessage().contains("returned NULL"),
                     "Unexpected message: " + ex.getMessage());
         }
@@ -246,7 +245,7 @@ class McpApiHandlerProviderTest {
 
             assertThrows(ApiHandlerException.class,
                     () -> provider.execute(context(
-                            null, Map.of(),
+                            Map.of(),
                             List.of(new ApiHandlerContext.OutputMapping("txn_id", "$.id")))));
         }
 
@@ -257,7 +256,7 @@ class McpApiHandlerProviderTest {
                     .thenThrow(new SQLException("ORA-20001: DBMS_CLOUD_AI_AGENT error"));
 
             ApiHandlerException ex = assertThrows(ApiHandlerException.class,
-                    () -> provider.execute(context(null, Map.of(), List.of())));
+                    () -> provider.execute(context(Map.of(), List.of())));
             assertTrue(ex.getMessage().contains(ACTIVITY));
             assertNotNull(ex.getCause());
         }
@@ -268,7 +267,7 @@ class McpApiHandlerProviderTest {
             stubRunTeamNull();
 
             ApiHandlerException ex = assertThrows(ApiHandlerException.class,
-                    () -> provider.execute(context(null, Map.of(), List.of())));
+                    () -> provider.execute(context(Map.of(), List.of())));
             assertTrue(ex.getMessage().contains(ACTIVITY),
                     "Expected activity in: " + ex.getMessage());
             assertTrue(ex.getMessage().contains(String.valueOf(INSTANCE_ID)),
