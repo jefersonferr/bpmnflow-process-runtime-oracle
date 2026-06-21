@@ -20,7 +20,6 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for {@link McpTokenManager}.
- *
  * HTTP layer fully mocked — no ADB endpoint required.
  */
 @DisplayName("McpTokenManager")
@@ -136,7 +135,6 @@ class McpTokenManagerTest {
     // Helper
     // -------------------------------------------------------------------------
 
-    @SuppressWarnings("unchecked")
     private void mockAuthEndpoint(String token) {
         ResponseEntity<Map> response = new ResponseEntity<>(
                 Map.of("access_token", token), HttpStatus.OK);

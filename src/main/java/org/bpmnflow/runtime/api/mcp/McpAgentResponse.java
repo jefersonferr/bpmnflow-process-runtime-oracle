@@ -3,6 +3,7 @@ package org.bpmnflow.runtime.api.mcp;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Getter;
 import org.bpmnflow.runtime.api.ApiHandlerException;
 
 /**
@@ -42,6 +43,7 @@ import org.bpmnflow.runtime.api.ApiHandlerException;
  * {@code ConnectionCallback} lambda — after reading the CLOB to {@link String}
  * but before the connection is returned to the pool.</p>
  */
+@Getter
 public class McpAgentResponse {
 
     private static final int PREVIEW_LENGTH = 200;
@@ -110,9 +112,6 @@ public class McpAgentResponse {
         JsonNode node = jsonRoot.get(fieldName);
         return (node == null || node.isNull() || node.isMissingNode()) ? null : node;
     }
-
-    public String   getRawText()  { return rawText; }
-    public JsonNode getJsonRoot() { return jsonRoot; }
 
     // -------------------------------------------------------------------------
     // Private helpers

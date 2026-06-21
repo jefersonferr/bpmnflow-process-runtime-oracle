@@ -27,7 +27,6 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for {@link McpApiHandlerProvider}.
- *
  * JDBC layer fully mocked — no Oracle database required.
  * Follows the same structure and conventions as {@code PlSqlApiHandlerProviderTest}.
  */

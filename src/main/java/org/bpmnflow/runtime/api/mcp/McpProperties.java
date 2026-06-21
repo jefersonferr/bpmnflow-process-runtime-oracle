@@ -1,5 +1,7 @@
 package org.bpmnflow.runtime.api.mcp;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -18,6 +20,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *       team-name: BPMNFLOW_TEAM
  * </pre>
  */
+@Setter
+@Getter
 @ConfigurationProperties(prefix = "bpmnflow.api-handler.mcp")
 public class McpProperties {
 
@@ -45,18 +49,4 @@ public class McpProperties {
      */
     private String teamName = "BPMNFLOW_TEAM";
 
-    public String getAuthUrl()                   { return authUrl; }
-    public void   setAuthUrl(String authUrl)     { this.authUrl = authUrl; }
-
-    public String getUsername()                  { return username; }
-    public void   setUsername(String username)   { this.username = username; }
-
-    public String getPassword()                  { return password; }
-    public void   setPassword(String password)   { this.password = password; }
-
-    public int  getTokenTtlMinutes()                       { return tokenTtlMinutes; }
-    public void setTokenTtlMinutes(int tokenTtlMinutes)    { this.tokenTtlMinutes = tokenTtlMinutes; }
-
-    public String getTeamName()                  { return teamName; }
-    public void   setTeamName(String teamName)   { this.teamName = teamName; }
 }

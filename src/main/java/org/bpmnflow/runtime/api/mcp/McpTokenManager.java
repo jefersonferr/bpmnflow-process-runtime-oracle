@@ -71,7 +71,6 @@ public class McpTokenManager {
     // Private
     // -------------------------------------------------------------------------
 
-    @SuppressWarnings("unchecked")
     private String fetchNewToken() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);

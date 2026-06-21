@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for {@link McpAgentResponse}.
- *
  * No Spring context — plain JUnit 5 with a shared ObjectMapper.
  */
 @DisplayName("McpAgentResponse")
