@@ -54,7 +54,7 @@ class McpPromptBuilderTest {
         }
 
         @Test
-        @DisplayName("exposes connector.input.* properties as available variables")
+        @DisplayName("exposes endpoint, method and payload as direct execution parameters")
         void exposesConnectorInputProperties() {
             ApiHandlerContext ctx = context(
                     "https://api.example.com/auth",
@@ -64,9 +64,9 @@ class McpPromptBuilderTest {
 
             String prompt = McpPromptBuilder.build(ctx);
 
-            assertTrue(prompt.contains("connector.input.url: https://api.example.com/auth"));
-            assertTrue(prompt.contains("connector.input.method: POST"));
-            assertTrue(prompt.contains("connector.input.payload: {\"clientId\":\"C-99\"}"));
+            assertTrue(prompt.contains("- endpoint: https://api.example.com/auth"));
+            assertTrue(prompt.contains("- method:   POST"));
+            assertTrue(prompt.contains("- payload:  {\"clientId\":\"C-99\"}"));
         }
 
         @Test
@@ -86,10 +86,9 @@ class McpPromptBuilderTest {
         void containsJsonInstruction() {
             String prompt = McpPromptBuilder.build(context(null, null, null, Map.of()));
 
-            assertTrue(prompt.contains("single valid JSON object only"));
-            assertTrue(prompt.contains("No explanation"));
-            assertTrue(prompt.contains("No markdown"));
-            assertTrue(prompt.contains("No code block"));
+            assertTrue(prompt.contains("single valid JSON object"));
+            assertTrue(prompt.contains("Do not explain"));
+            assertTrue(prompt.contains("Do not use markdown or code blocks"));
         }
     }
 
@@ -129,7 +128,7 @@ class McpPromptBuilderTest {
 
             assertNotNull(prompt);
             assertFalse(prompt.isBlank());
-            assertTrue(prompt.contains("single valid JSON object only"));
+            assertTrue(prompt.contains("single valid JSON object"));
         }
 
         @Test

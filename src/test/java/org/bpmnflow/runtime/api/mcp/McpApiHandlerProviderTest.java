@@ -204,13 +204,19 @@ class McpApiHandlerProviderTest {
         }
 
         @Test
-        @DisplayName("passes null conversation_id (stateless per activity)")
-        void passesNullConversationId() throws Exception {
+        @DisplayName("passes conversation_id as CLOB in params JSON (two-step CREATE_CONVERSATION)")
+        void passesConversationIdAsClob() throws Exception {
             stubRunTeamSuccess("{\"ok\": true}");
+
+            // Stub getString(1) for CREATE_CONVERSATION step
+            when(callableStatement.getString(1)).thenReturn("test-conv-id");
 
             provider.execute(context(null, Map.of(), List.of()));
 
-            verify(callableStatement).setNull(4, java.sql.Types.VARCHAR);
+            // Step 1: CREATE_CONVERSATION OUT param registered as VARCHAR
+            verify(callableStatement).registerOutParameter(1, java.sql.Types.VARCHAR);
+            // Step 2: params CLOB bound at position 4
+            verify(callableStatement).setClob(eq(4), any(Clob.class));
         }
     }
 
